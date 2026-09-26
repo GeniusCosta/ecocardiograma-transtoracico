@@ -3831,9 +3831,9 @@ const PACS=(function(){
     ['DDVE','Diâmetro telediastólico (DDVE)','len',['29436-3'],/LVID|LVEDD|internal (end )?diastolic dimension|left ventricle internal|\bDIVE\s*d?\b|DIVEd|\bDDVE\b|di[aâ]metro (tele)?diast/i,/systol|LVIDs|LVID\s*s\b|DIVEs|DIVE\s*s\b|DSVE|sist|index|\/\s*BSA|vol/i,[12,110]],
     ['FEsimp','Fração de ejeção (Simpson)','pct',[],/(EF|\bFE|ejection fraction|fra[cç][aã]o de eje[cç][aã]o).*(MOD|simpson|dis[kc]s?|bi-?plane|\bBP\b|A4C|A2C)|(MOD|simpson|dis[kc]s?|bi-?plane).*(EF|ejection fraction)|auto\s*EF|\baEF\b/i,/teich|cube|\bRV\b|right/i,[5,95]],
     ['GLS','Strain longitudinal global (GLS)','pct',[],/global longitudinal (peak )?strain|\bGLS\b|GL\s*PSS|\bGLPS/i,/rate/i,[1,40]],
-    ['AEvol','Volume do AE','vol',[],/\bLA\s*(ES\s*)?Vol|\bLAESV|\bLAV\b|left atri(um|al).*volume|\bVol\.?\s*AE\b|\bAE\s*Vol|volume (do )?AE\b/i,/index|\/\s*BSA|LAVI|ratio/i,[5,400]],
+    ['AEvol','Volume do AE','vol',[],/\bLA\s*(ES\s*)?Vol|\bLA\s*E[SD]V|\bLAESV|\bLAV\b|left atri(um|al).*volume|\bVol\.?\s*AE\b|\bAE\s*Vol|volume (do )?AE\b/i,/index|\/\s*BSA|LAVI|ESV\s*i\b|ESVi|ratio/i,[5,400]],
     ['AEdiam','Diâmetro do AE','len',['29469-4'],/\bLA\s*(diam|dimen|dimension|AP|size|major)|\bLAD\b|\bLA\s*dim|left atri(um|al).*(dimension|diam)|\bAE\s*(diam|dim)|di[aâ]m\.?\s*(do )?AE\b/i,/ratio|LA\s*\/\s*Ao|Ao\s*\/\s*LA|vol|area/i,[12,95]],
-    ['ADvol','Volume do AD','vol',[],/\bRA\s*(ES\s*)?Vol|\bRAESV|\bRAV\b|right atri(um|al).*volume|\bVol\.?\s*AD\b|\bAD\s*Vol|volume (do )?AD\b/i,/index|\/\s*BSA|RAVI|ratio/i,[5,400]],
+    ['ADvol','Volume do AD','vol',[],/\bRA\s*(ES\s*)?Vol|\bRA\s*E[SD]V|\bRAESV|\bRAV\b|right atri(um|al).*volume|\bVol\.?\s*AD\b|\bAD\s*Vol|volume (do )?AD\b/i,/index|\/\s*BSA|RAVI|ESV\s*i\b|ESVi|ratio/i,[5,400]],
     ['VDlong','VD comprimento longitudinal','len',[],/RVD3|\bRV\s*(long|length|major)|right ventric.*(longitudinal|length|major)/i,/strain/i,[25,130]],
     ['VDmed','VD diâmetro médio','len',[],/RVD2|\bRV\s*mid|right ventric.*mid/i,null,[8,75]],
     ['TAPSE','TAPSE','len',[],/TAPSE|tricuspid annular plane systolic excursion/i,null,[2,50]],
@@ -3848,6 +3848,11 @@ const PACS=(function(){
     ['AoRaiz','Raiz da aorta','len',['18015-7'],/\bao(rtic)?\s*root|sinus(es)? of valsalva|\bao\s*sinus|\bAoD\b|\bAo\s*(diam|dimension)\b|raiz (da )?ao(rta)?/i,/index|\/\s*BSA|ratio|LA\s*\/|\/\s*LA/i,[8,85]],
     ['Elat','E′ lateral','vel',[],/\blat\w*\.?\s*E\W{0,2}\s*vel|(e['’′`´ˋ‘ʹ]|e\s*prime|\bEa\b|\bEm\b|early diastolic tissue).*lat|lat.*(e['’′`´ˋ‘ʹ]|e\s*prime|\bEa\b|\bEm\b)/i,/E\s*\/\s*e|\/|ratio|a['’′`´ˋ‘ʹ]|s['’′`´ˋ‘ʹ]/i,[1,35]],
     ['Esep','E′ septal','vel',[],/\b(sept|med)\w*\.?\s*E\W{0,2}\s*vel|(e['’′`´ˋ‘ʹ]|e\s*prime|\bEa\b|\bEm\b|early diastolic tissue).*(sept|medial)|(sept|medial).*(e['’′`´ˋ‘ʹ]|e\s*prime|\bEa\b|\bEm\b)/i,/E\s*\/\s*e|\/|ratio|a['’′`´ˋ‘ʹ]|s['’′`´ˋ‘ʹ]/i,[1,35]],
+    // IT / PSAP (Philips: "TR Vmax" → "Vel 2.5 m/s", "PG 25 mmHg"; "RAP"; "RVSP")
+    ['_TRVmax','IT — velocidade máxima','vel',[],/\bTR\s*(Vmax|V\s*max|max\s*vel|peak\s*vel|vel)|tricuspid regurg\w*.*vel|\bIT\s*(Vmax|vel)|\bVmax\s*IT\b/i,/\bPG\b|maxPG|grad|VTI|mean|time/i,[50,700]],
+    ['_TRPG','IT — gradiente VD-AD','pg',[],/\bTR\s*(max\s*)?PG|\bTR\b.*\bPG\b|tricuspid regurg\w*.*(gradient|PG)|\bIT\b.*(grad|\bPG\b)/i,/mean|VTI/i,[3,160]],
+    ['_RAP','PAD (pressão do AD)','pg',[],/\bRAP\b|\bRA\s*press|right atri\w* pressure|press[aã]o (do )?AD\b|\bPAD\b/i,null,[0,30]],
+    ['_RVSP','PSAP','pg',[],/\bRVSP\b|\bPASP\b|\bPSAP\b|right ventric\w* systolic pressure|systolic pulmonary artery pressure/i,null,[10,180]],
     ['MvAnn','Anel mitral','len',[],/\bMV\s*ann|mitral (valve )?ann(ulus|ular)/i,/vel|e['’′`´ˋ‘ʹ]|a['’′`´ˋ‘ʹ]|s['’′`´ˋ‘ʹ]|tissue|TDI|lat|sept|medial|MAPSE|excursion/i,[8,70]],
     ['TvAnn','Anel tricúspide','len',[],/\bTV\s*ann|tricuspid (valve )?ann(ulus|ular)/i,/TAPSE|excursion|vel|s['’′`´ˋ‘ʹ]|plane|TDI/i,[6,70]],
     ['PvAnn','Anel pulmonar','len',[],/\bPV\s*ann|pulmon(ic|ary)(\s*valve)?\s*ann/i,/vel|grad/i,[4,45]],
@@ -3861,8 +3866,9 @@ const PACS=(function(){
   const UNITS={
     len:{'mm':1,'cm':10,'m':1000,'':1},
     vel:{'cm/s':1,'m/s':100,'mm/s':0.1,'':1},
-    vol:{'ml':1,'cm3':1,'l':1000,'':1},
-    pct:{'%':1,'':1}
+    vol:{'ml':1,'cm3':1,'cm³':1,'l':1000,'':1},
+    pct:{'%':1,'':1},
+    pg:{'mmhg':1,'':1}
   };
   function conv(v,unit,cls){
     const u=String(unit||'').replace(/[{}\s]/g,'').toLowerCase();
@@ -3929,7 +3935,7 @@ const PACS=(function(){
   /* ---------- REPORT em PDF: recebe o texto já separado em linhas (pdf.js) ----------
      Reconhece "Nome valor unidade" (ex.: "IVSd 1.0 cm", "SIVd 10 mm", "MV E Vel 0,82 m/s"),
      inclusive duas colunas na mesma linha e colunas extras de valores (média/mín/máx). */
-  const U_RE=/^(cm\/s|m\/s|mm\/s|mm|cm|m|ml|l|%|cm2|cm²|mmhg|ms|bpm|g|g\/m2|g\/m²|ml\/m2|ml\/m²|cm\/m2|mm\/m2|cm2\/m2|kg|m2|m²)$/i;
+  const U_RE=/^(cm\/s|m\/s|mm\/s|mm|cm|m|ml|l|cm3|cm³|%|cm2|cm²|mmhg|ms|bpm|g|g\/m2|g\/m²|ml\/m2|ml\/m²|cm\/m2|mm\/m2|cm2\/m2|kg|m2|m²)$/i;
   const NUM_RE=/^[-−]?\d+(?:[.,]\d+)?$/;
   const PAT_RE=/\b(height|weight|altura|peso|BSA|SC|idade|age|DOB|nasc\w*|birth)\b/i;
   const pdfNum=s=>parseFloat(String(s).replace('−','-').replace(',','.'));
@@ -3993,16 +3999,18 @@ const PACS=(function(){
       data: iso(dt), peso: peso>0?peso:null, altura: altura>0?altura:null
     };
   }
-  const GENERIC=/^(vel|velocity|pg|peak|mean|max|vmax|vti|value|valor|avg|m[eé]dia)$/i;
+  const GENERIC=/^(vel|velocity|pg|peak|mean|max|vmax|vti|value|valor|avg|m[eé]dia|vol|volume|diam|dist|area|length)$/i;
   function parsePdf(lines){
     const meas=[]; let ctx='';
     for(const ln of lines){
       const first=ln.trim().split(/\s+/)[0]||'';
       const ms=lineMeas(ctx && /^[-−]?\d/.test(first) ? ctx+' '+ln : ln);   // linha começa pelo valor → nome está na linha anterior
-      if(!ms.length){ const t=ln.trim(); if(t && t.length<=40 && !/\d/.test(t) && !/:/.test(t)) ctx=t; continue; }
+      if(!ms.length){ const t=ln.trim(); if(t && t.length<=40 && !t.split(/\s+/).some(w=>NUM_RE.test(w)) && !/:/.test(t)) ctx=t; continue; }
+      let prev=null;
       ms.forEach(m=>{ if(PAT_RE.test(m.name)) return;
-        if(ctx && m.name.split(/\s+/).every(w=>GENERIC.test(w))) m.name=ctx+' '+m.name;   // "Vel" → "MV Peak E Vel Vel"
-        meas.push({name:m.name,code:'',scheme:'PDF',value:m.value,unit:m.unit.replace('²','2'),unitM:m.unit,mods:[],ctx:ctx?[ctx]:[]}); });
+        if(m.name.split(/\s+/).every(w=>GENERIC.test(w))){ const base=prev||ctx; if(base) m.name=base+' '+m.name; }   // "Vel" → "MV Peak E Vel Vel"
+        else prev=m.name;
+        meas.push({name:m.name,code:'',scheme:'PDF',value:m.value,unit:m.unit.replace('²','2'),unitM:m.unit,mods:[],ctx:[]}); });
     }
     return {meas,p:pdfPatient(lines.join('\n'))};
   }
@@ -4013,7 +4021,7 @@ const PACS=(function(){
 /* ====================== UI: botão PACS + lista de exames ====================== */
 (function(){
   const HEAD_BYTES=1<<20;   // lê só o 1º MB de cada imagem (cabeçalho); SR é lido inteiro
-  let pacsRoot=null;
+  let pacsRoot=null, pacsTR=null;   // pacsTR: dados da IT do último exame importado
 
   // botão na barra superior (antes de "Pasta…") e modal
   const b=document.createElement('button');
@@ -4251,8 +4259,9 @@ const PACS=(function(){
     if(p.data) set('pData',p.data,'Data do exame','');
     if(p.peso) set('peso',Math.round(p.peso*10)/10,'Peso (kg)','');
     if(p.altura) set('altura',Math.round(p.altura),'Altura (cm)','');
+    ['ref_vt_psap','ref_vt_pad'].forEach(id=>{ const el=$(id); if(el && el.dataset.pacsAuto==='1'){ el.value=''; el.dataset.pacsAuto='0'; } });
     // medidas
-    const units={len:'mm',vel:'cm/s',vol:'ml',pct:'%'};
+    const units={len:'mm',vel:'cm/s',vol:'ml',pct:'%',pg:'mmHg'};
     PACS.RULES.forEach(r=>{
       const h=best[r[0]]; if(!h) return;
       // arredondamento na unidade do laudo: mm/ml/% inteiros (7,17 cm → 72 mm = 7,2 cm); cm/s e GLS com 1 casa
@@ -4260,6 +4269,15 @@ const PACS=(function(){
       const v=Math.round(h.v*k+1e-9)/k;
       set(r[0], v, r[1]+' ('+units[r[2]]+')', h.src.name+(h.src.unit?' ['+h.src.value+' '+h.src.unit+']':''));
     });
+    // IT → PSAP: fica guardado; preenche quando o grau do refluxo tricúspide for escolhido
+    const trV=best._TRVmax?Math.round(best._TRVmax.v)/100:null;          // m/s, 2 casas (como no aparelho)
+    const trPG=best._TRPG?Math.round(best._TRPG.v):(trV!=null?Math.round(4*trV*trV):null);
+    pacsTR=(trPG!=null||best._RVSP)?{v:trV,grad:trPG,pad:best._RAP?best._RAP.v:null,psap:best._RVSP?best._RVSP.v:null}:null;
+    if(trV!=null) filled.push(['IT — velocidade máxima',trV.toFixed(2)+' m/s',best._TRVmax.src.name]);
+    if(trPG!=null) filled.push(['IT — gradiente VD-AD (4V²)',trPG+' mmHg',best._TRPG?best._TRPG.src.name:'calculado']);
+    if(best._RAP) filled.push(['PAD informada no REPORT',Math.round(best._RAP.v)+' mmHg',best._RAP.src.name]);
+    if(best._RVSP) filled.push(['PSAP do REPORT',Math.round(best._RVSP.v)+' mmHg',best._RVSP.src.name]);
+    trApply();
     compute();
     setTimeout(()=>document.querySelectorAll('.pacs-fill').forEach(x=>x.classList.remove('pacs-fill')),15000);
     window.__pacsLast={study:st,best,unmapped,patient:p};
@@ -4272,6 +4290,7 @@ const PACS=(function(){
     else if(st.pdf && !nMed) h+='<div class="warn">⚠ Nenhuma medida reconhecida no PDF. Abra "Texto lido do PDF" abaixo e envie uma foto para ajuste.</div>';
     if(nStudies>1) h+='<div class="warn">A pasta tinha '+nStudies+' exames diferentes — importado o mais recente com medidas.</div>';
     if(!st.pdf && !st.nSR) h+='<div class="warn">⚠ Nenhum SR (Structured Report) de medidas nesse exame. No Affiniti 70, habilite o envio do SR no destino DICOM (Setup ▸ DICOM ▸ Store ▸ "Structured Reports"/SR) e reenvie o exame. Só os dados do paciente foram importados.</div>';
+    if(pacsTR) h+='<div class="warn">IT importada: marque o <b>grau do refluxo tricúspide</b> (aba Descrição) e informe a <b>PAD</b> — a PSAP (gradiente + PAD) é preenchida automaticamente.</div>';
     h+='<h4>Preenchido automaticamente</h4><table>';
     filled.forEach(f=>{ h+='<tr><td>'+escapeHtml(f[0])+'</td><td class="v">'+escapeHtml(String(f[1]).replace('.',','))+'</td><td class="o">'+escapeHtml(f[2]||'')+'</td></tr>'; });
     h+='</table>';
@@ -4288,6 +4307,26 @@ const PACS=(function(){
     $('pacsFoot').textContent=(p.nome||'Paciente')+(p.data?' · '+p.data.split('-').reverse().join('/'):'');
     toast('PACS: '+nMed+' medida(s) importada(s)'+(p.nome?' — '+p.nome:''));
   }
+
+  /* ---- IT → PSAP (painel "Refluxo tricúspide": #ref_vt_grau / #ref_vt_pad / #ref_vt_psap) ---- */
+  function trApply(){
+    const T=pacsTR, g=$('ref_vt_grau'), ps=$('ref_vt_psap'), pd=$('ref_vt_pad');
+    if(!T||!g||!ps||!pd||!g.value) return;                     // só com o grau do refluxo escolhido
+    if(T.pad!=null && pd.value===''){ pd.value=Math.round(T.pad); pd.dataset.pacsAuto='1'; pd.classList.add('pacs-fill'); }
+    const pad=num('ref_vt_pad');
+    const v = (T.grad!=null && pad!=null) ? T.grad+pad : T.psap;
+    if(v==null) return;
+    if(ps.value!=='' && ps.dataset.pacsAuto!=='1') return;     // PSAP digitada à mão: respeita
+    ps.value=Math.round(v); ps.dataset.pacsAuto='1'; ps.classList.add('pacs-fill');
+    compute();
+  }
+  document.addEventListener('input',e=>{
+    const id=e.target&&e.target.id;
+    if(id==='ref_vt_psap') e.target.dataset.pacsAuto='0';
+    else if(id==='ref_vt_pad'){ e.target.dataset.pacsAuto='0'; trApply(); }
+    else if(id==='ref_vt_grau') trApply();
+  });
+  document.addEventListener('change',e=>{ if(e.target&&e.target.id==='ref_vt_grau') trApply(); });
 
   b.onclick=openPacs;
   $('pacsRootBtn').onclick=pickRoot;
