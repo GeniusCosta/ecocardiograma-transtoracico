@@ -3662,5 +3662,638 @@ function fitTeePage(){
   buildDesc();buildCon();buildDescTee();renderTeeCompChips();syncConText();applyZoom();compute();
 })();
 </script>
+<!-- ====================== v.pacs-66: IMPORTAÇÃO PACS / DICOM (Philips Affiniti 70) ======================
+     Bloco ADICIONADO — não altera o código acima. Lê a pasta local onde o Affiniti grava os exames
+     (DICOM, padrão C:\ECO-PACS\exames), encontra o Structured Report (SR) de medidas e preenche
+     automaticamente os campos do laudo (SIV, PP, DDVE, DSVE, AE, Ao, VD, TAPSE, E/A, e′ …).
+     O SR precisa estar habilitado no Affiniti (Setup ▸ DICOM ▸ destino de armazenamento ▸ enviar SR). -->
+<style>
+  #btnPACS{border-color:#1f5fa8}
+  #btnPACS.set{background:#1f5fa8;color:#fff}
+  input.pacs-fill{outline:2px solid #3fb6a8;outline-offset:1px}
+  .pacs-sum{padding:10px 14px;font-size:12.5px}
+  .pacs-sum table{width:100%;border-collapse:collapse;margin:6px 0 10px}
+  .pacs-sum td{padding:3px 6px;border-bottom:1px solid var(--line)}
+  .pacs-sum td.v{text-align:right;font-weight:600;color:var(--accent);white-space:nowrap}
+  .pacs-sum td.o{color:var(--dim);font-size:11px}
+  .pacs-sum h4{font-size:11px;color:var(--accent);text-transform:uppercase;letter-spacing:.6px;margin:8px 0 2px}
+  .pacs-sum details{margin-top:6px;color:var(--dim)}
+  .pacs-sum .warn{color:#f0c068;margin:6px 0}
+</style>
+<script>
+/* PACS-CORE-START — leitor DICOM + extração de medidas do SR (funções puras, sem DOM) */
+const PACS=(function(){
+  const LONG_VR=new Set(['OB','OD','OF','OL','OV','OW','SQ','SV','UC','UN','UR','UT','UV']);
+  // tags de sequência usadas em SR (para arquivos Implicit VR, onde o VR não vem no arquivo)
+  const SQ_TAGS=new Set(['0040A730','0040A043','0040A300','004008EA','0040A168','0040A504','00081115','00081199',
+    '0040A375','0040A385','00400260','0040A195','0040A170','00081032','00081140','0040A370','00081111','00081084','0040A073']);
+  // VR mínimo para Implicit VR (o resto é tratado como texto)
+  const IMPL_VR={'0040A30A':'DS','00101010':'AS','00101020':'DS','00101030':'DS','00280010':'US','00280011':'US'};
+  const TXT_VR=new Set(['AE','AS','CS','DA','DS','DT','IS','LO','LT','PN','SH','ST','TM','UI','UT','UC','UR']);
+  const hex4=n=>n.toString(16).toUpperCase().padStart(4,'0');
+
+  function parse(buf,opt){
+    opt=opt||{};
+    const dv=new DataView(buf), u8=new Uint8Array(buf), N=buf.byteLength;
+    let dec=new TextDecoder('windows-1252');
+    const ds={};
+    let off=0, explicit=true;
+    if(!opt.noMeta){
+      if(N>=132 && u8[128]===68&&u8[129]===73&&u8[130]===67&&u8[131]===77) off=132;
+      // grupo 0002 (meta) é sempre Explicit VR Little Endian
+      while(off+8<=N && dv.getUint16(off,true)===0x0002) off=readEl(off,N,ds,true,true);
+      const ts=ds['00020010']?ds['00020010'].v:null;
+      if(ts==='1.2.840.10008.1.2.1.99'){ ds.__deflatedAt=off; return ds; }
+      if(ts==='1.2.840.10008.1.2.2') throw new Error('Big Endian não suportado');
+      if(ts) explicit = ts!=='1.2.840.10008.1.2';
+      else if(off+6<=N){ const a=u8[off+4],b=u8[off+5]; explicit=(a>=65&&a<=90&&b>=65&&b<=90); }
+    }
+    try{ parseDs(off,N,ds,explicit,true); }catch(e){ /* arquivo truncado (lemos só o cabeçalho) — mantém o que já foi lido */ }
+    return ds;
+
+    function str(off,len){
+      let s=dec.decode(u8.subarray(off,off+len));
+      return s.replace(/[\0\s]+$/,'').replace(/^\s+/,'');
+    }
+    function readEl(off,end,target,expl,top){
+      const g=dv.getUint16(off,true), e=dv.getUint16(off+2,true);
+      const tag=hex4(g)+hex4(e);
+      let vr,len,hdr;
+      if(expl){
+        vr=String.fromCharCode(u8[off+4],u8[off+5]);
+        if(LONG_VR.has(vr)){len=dv.getUint32(off+8,true);hdr=12;} else {len=dv.getUint16(off+6,true);hdr=8;}
+      }else{
+        len=dv.getUint32(off+4,true);hdr=8;
+        vr=(len===0xFFFFFFFF||SQ_TAGS.has(tag))?'SQ':(IMPL_VR[tag]||'UN');
+      }
+      off+=hdr;
+      if(top && g===0x7FE0 && opt.stopAtPixel) return -1;
+      if(vr==='SQ' || (vr==='UN' && len===0xFFFFFFFF)){
+        const items=[];
+        off=parseSeq(off,len,items, vr==='UN'?false:expl);   // UN de tamanho indefinido = Implicit VR
+        target[tag]={vr:'SQ',v:items};
+        return off;
+      }
+      if(len===0xFFFFFFFF) return skipEncap(off);               // pixel data encapsulado
+      if(off+len>N) throw new RangeError('truncado');
+      target[tag]={vr,v:value(vr,off,len,expl?null:tag)};
+      if(tag==='00080005' && /192/.test(target[tag].v)) dec=new TextDecoder('utf-8');
+      return off+len;
+    }
+    function value(vr,off,len,implTag){
+      if(implTag && vr==='UN') vr='LO';   // Implicit VR: tenta como texto
+      if(vr==='DS'||vr==='IS'){ const s=str(off,len).split('\\')[0]; const n=parseFloat(s); return isNaN(n)?null:n; }
+      if(TXT_VR.has(vr)) return str(off,len);
+      if(vr==='FD') return len>=8?dv.getFloat64(off,true):null;
+      if(vr==='FL') return len>=4?dv.getFloat32(off,true):null;
+      if(vr==='US') return len>=2?dv.getUint16(off,true):null;
+      if(vr==='UL') return len>=4?dv.getUint32(off,true):null;
+      if(vr==='SS') return len>=2?dv.getInt16(off,true):null;
+      if(vr==='SL') return len>=4?dv.getInt32(off,true):null;
+      return null;   // binário (OB/OW/…) — não interessa
+    }
+    function parseDs(off,end,target,expl,top){
+      while(off+8<=end){
+        const g=dv.getUint16(off,true), e=dv.getUint16(off+2,true);
+        if(g===0xFFFE){ if(e===0xE00D||e===0xE0DD) return off+8; off+=8; continue; }
+        const r=readEl(off,end,target,expl,top);
+        if(r<0) return end;
+        off=r;
+      }
+      return off;
+    }
+    function parseSeq(off,len,items,expl){
+      const undef=len===0xFFFFFFFF, end=undef?N:off+len;
+      while(off+8<=end){
+        const g=dv.getUint16(off,true), e=dv.getUint16(off+2,true), il=dv.getUint32(off+4,true);
+        off+=8;
+        if(g===0xFFFE && e===0xE0DD) return off;
+        if(g!==0xFFFE || e!==0xE000) return undef?off:end;
+        const item={};
+        if(il===0xFFFFFFFF) off=parseDs(off,N,item,expl,false);
+        else { parseDs(off,off+il,item,expl,false); off+=il; }
+        items.push(item);
+      }
+      return undef?off:end;
+    }
+    function skipEncap(off){
+      while(off+8<=N){
+        const g=dv.getUint16(off,true), e=dv.getUint16(off+2,true), il=dv.getUint32(off+4,true);
+        off+=8;
+        if(g===0xFFFE && e===0xE0DD) return off;
+        off+=il;
+      }
+      return N;
+    }
+  }
+
+  const S=(ds,tag)=>{const x=ds&&ds[tag];return x&&x.v!=null?x.v:null;};
+  const code=(item,tag)=>{const s=item&&item[tag];const c=s&&s.v&&s.v[0];if(!c)return null;
+    return {v:String(S(c,'00080100')||S(c,'00080119')||''),s:String(S(c,'00080102')||''),m:String(S(c,'00080104')||'')};};
+
+  /* Achata a árvore do SR: cada NUM vira {name, code, value, unit, mods[], ctx[]} */
+  function flatten(ds){
+    const out=[];
+    (function walk(items,ctx){
+      for(const it of items||[]){
+        const vt=S(it,'0040A040'), cn=code(it,'0040A043');
+        const kids=(it['0040A730']&&it['0040A730'].v)||[];
+        if(vt==='NUM'){
+          const mv=it['0040A300']&&it['0040A300'].v&&it['0040A300'].v[0];
+          if(!mv||!cn) continue;
+          const val=S(mv,'0040A30A'); if(val==null||isNaN(val)) continue;
+          const u=code(mv,'004008EA');
+          const mods=[];
+          for(const k of kids){
+            const kc=code(k,'0040A043'), kv=code(k,'0040A168'), kt=S(k,'0040A160');
+            if(kc) mods.push(kc.m+(kv?': '+kv.m:'')+(kt?': '+kt:''));
+          }
+          out.push({name:cn.m||cn.v,code:cn.v,scheme:cn.s,value:+val,unit:u?u.v:'',unitM:u?u.m:'',mods,ctx:ctx.slice()});
+        }else if(kids.length){
+          const add=[];
+          if(cn && vt==='CONTAINER') add.push(cn.m);
+          for(const k of kids){ if(S(k,'0040A040')==='CODE' && S(k,'0040A010')==='HAS CONCEPT MOD'){ const kv=code(k,'0040A168'); if(kv) add.push(kv.m); } }
+          walk(kids,ctx.concat(add));
+        }
+      }
+    })(ds['0040A730']&&ds['0040A730'].v,[]);
+    return out;
+  }
+
+  /* Regras: [campo, rótulo, classe de unidade, códigos LOINC, regex, regex de exclusão, faixa plausível].
+     A ordem importa: regras específicas primeiro. Cobre nomes padrão DICOM (TID 5200) e abreviações Philips. */
+  const RULES=[
+    ['SIVs','Septo IV sistólico','len',['18158-5'],/IVS\s*s\b|IVSs|septum.*(systol)|\bSIV\s*s\b|SIVs|septo.*sist/i,null,[2,45]],
+    ['SIV','Septo interventricular (SIV)','len',['18154-4'],/\bIVS\s*d?\b|IVSd|interventricular septum|septal (wall )?thickness|\bSIV\s*d?\b|SIVd|septo interv/i,/systol|IVSs|IVS\s*s\b|SIVs|SIV\s*s\b|sist|vel|strain|e['’′]/i,[2,45]],
+    ['PPVEs','Parede posterior sistólica','len',['18156-9'],/LVPW\s*s\b|LVPWs|posterior wall.*systol|PPVE\s*s\b|PPVEs|parede posterior.*sist/i,null,[2,45]],
+    ['PP','Parede posterior (PP)','len',['18152-8'],/LVPW|posterior wall|\bPPVE\s*d?\b|PPVEd|\bPP\s*d\b|parede posterior/i,/systol|LVPWs|LVPW\s*s\b|PPVEs|PPVE\s*s\b|sist|vel|strain/i,[2,45]],
+    ['DSVE','Diâmetro telessistólico (DSVE)','len',['29438-9'],/LVID\s*s\b|LVIDs|LVESD|internal (end )?systolic dimension|(LVID|internal dimension).*systol|\bDIVE\s*s\b|DIVEs|\bDSVE\b|di[aâ]metro (tele)?sist/i,/index|\/\s*BSA|vol/i,[8,90]],
+    ['DDVE','Diâmetro telediastólico (DDVE)','len',['29436-3'],/LVID|LVEDD|internal (end )?diastolic dimension|left ventricle internal|\bDIVE\s*d?\b|DIVEd|\bDDVE\b|di[aâ]metro (tele)?diast/i,/systol|LVIDs|LVID\s*s\b|DIVEs|DIVE\s*s\b|DSVE|sist|index|\/\s*BSA|vol/i,[12,110]],
+    ['FEsimp','Fração de ejeção (Simpson)','pct',[],/(EF|\bFE|ejection fraction|fra[cç][aã]o de eje[cç][aã]o).*(MOD|simpson|dis[kc]s?|bi-?plane|\bBP\b|A4C|A2C)|(MOD|simpson|dis[kc]s?|bi-?plane).*(EF|ejection fraction)|auto\s*EF|\baEF\b/i,/teich|cube|\bRV\b|right/i,[5,95]],
+    ['GLS','Strain longitudinal global (GLS)','pct',[],/global longitudinal (peak )?strain|\bGLS\b|GL\s*PSS|\bGLPS/i,/rate/i,[1,40]],
+    ['AEvol','Volume do AE','vol',[],/\bLA\s*(ES\s*)?Vol|\bLAESV|\bLAV\b|left atri(um|al).*volume|\bVol\.?\s*AE\b|\bAE\s*Vol|volume (do )?AE\b/i,/index|\/\s*BSA|LAVI|ratio/i,[5,400]],
+    ['AEdiam','Diâmetro do AE','len',['29469-4'],/\bLA\s*(diam|dimen|dimension|AP|size|major)|\bLAD\b|\bLA\s*dim|left atri(um|al).*(dimension|diam)|\bAE\s*(diam|dim)|di[aâ]m\.?\s*(do )?AE\b/i,/ratio|LA\s*\/\s*Ao|Ao\s*\/\s*LA|vol|area/i,[12,95]],
+    ['ADvol','Volume do AD','vol',[],/\bRA\s*(ES\s*)?Vol|\bRAESV|\bRAV\b|right atri(um|al).*volume|\bVol\.?\s*AD\b|\bAD\s*Vol|volume (do )?AD\b/i,/index|\/\s*BSA|RAVI|ratio/i,[5,400]],
+    ['VDlong','VD comprimento longitudinal','len',[],/RVD3|\bRV\s*(long|length|major)|right ventric.*(longitudinal|length|major)/i,/strain/i,[25,130]],
+    ['VDmed','VD diâmetro médio','len',[],/RVD2|\bRV\s*mid|right ventric.*mid/i,null,[8,75]],
+    ['TAPSE','TAPSE','len',[],/TAPSE|tricuspid annular plane systolic excursion/i,null,[2,50]],
+    ['VDdiam','VD diâmetro basal','len',[],/RVD1|\bRV\s*(basal|base)|\bRVID\s*d?\b|\bRVIDd|right ventric.*(basal|internal diastolic dimension)|\bRVD\b/i,/systol|RVIDs|RVOT|wall|RVAW|FAC|area|strain/i,[8,85]],
+    ['FAC','FAC do VD','pct',[],/\bFAC\b|fractional area change/i,null,[5,90]],
+    ['AoAnn','Anel aórtico','len',['17996-9'],/\bAo(rtic)?\s*(valve\s*)?ann(ulus|ular)?\b|\bAV\s*ann/i,/vel|area|VTI|grad/i,[6,45]],
+    ['AoStj','Junção sinotubular','len',['17995-1'],/sino-?tubular|\bST\s*junc|\bSTJ\b/i,/index|\/\s*BSA/i,[6,65]],
+    ['AoAsc','Aorta ascendente','len',['18012-4'],/\basc(ending)?\.?\s*ao|\bao(rta)?\s*asc|ascending aorta|aorta ascendente/i,/index|\/\s*BSA/i,[8,90]],
+    ['AoArchD','Arco transverso distal','len',[],/distal (transverse )?arch|arch\s*dist|transverse arch/i,null,[2,60]],
+    ['AoIsthmus','Istmo aórtico','len',[],/isthmus/i,null,[2,60]],
+    ['AoArco','Arco aórtico','len',['18011-6'],/\bao(rtic)?\s*arch|\barch\b/i,/vel|grad/i,[6,60]],
+    ['AoRaiz','Raiz da aorta','len',['18015-7'],/\bao(rtic)?\s*root|sinus(es)? of valsalva|\bao\s*sinus|\bAoD\b|\bAo\s*(diam|dimension)\b|raiz (da )?ao(rta)?/i,/index|\/\s*BSA|ratio|LA\s*\/|\/\s*LA/i,[8,85]],
+    ['Elat','E′ lateral','vel',[],/(e['’′]|e\s*prime|\bEa\b|\bEm\b|early diastolic tissue).*lat|lat.*(e['’′]|e\s*prime|\bEa\b|\bEm\b)/i,/E\s*\/\s*e|\/|ratio|a['’′]|s['’′]/i,[1,35]],
+    ['Esep','E′ septal','vel',[],/(e['’′]|e\s*prime|\bEa\b|\bEm\b|early diastolic tissue).*(sept|medial)|(sept|medial).*(e['’′]|e\s*prime|\bEa\b|\bEm\b)/i,/E\s*\/\s*e|\/|ratio|a['’′]|s['’′]/i,[1,35]],
+    ['MvAnn','Anel mitral','len',[],/\bMV\s*ann|mitral (valve )?ann(ulus|ular)/i,/vel|e['’′]|a['’′]|s['’′]|tissue|TDI|lat|sept|medial|MAPSE|excursion/i,[8,70]],
+    ['TvAnn','Anel tricúspide','len',[],/\bTV\s*ann|tricuspid (valve )?ann(ulus|ular)/i,/TAPSE|excursion|vel|s['’′]|plane|TDI/i,[6,70]],
+    ['PvAnn','Anel pulmonar','len',[],/\bPV\s*ann|pulmon(ic|ary)(\s*valve)?\s*ann/i,/vel|grad/i,[4,45]],
+    ['RPA','Ramo pulmonar direito','len',[],/\bRPA\b|right pulmonary artery/i,/vel|grad/i,[2,40]],
+    ['LPA','Ramo pulmonar esquerdo','len',[],/\bLPA\b|left pulmonary artery/i,/vel|grad/i,[2,40]],
+    ['MPA','Tronco pulmonar','len',[],/\bMPA\b|main pulmonary|pulmonary (artery )?trunk|\bPA\s*(diam|trunk|main)/i,/press|vel|grad|RPA|LPA|accel|AT\b/i,[3,60]],
+    ['ondaE','Onda E mitral','vel',['18037-2'],/\bMV\s*E\s*(vel|peak|max|wave)?\b|mitral (valve )?e[- ]?(wave|point|peak|vel)|\bE\s*(vel|wave|peak)\b/i,/e['’′]|prime|tissue|TDI|annul|\/|ratio|\bDT\b|decel|time|VTI|lat|sept/i,[10,300]],
+    ['ondaA','Onda A mitral','vel',['17978-7'],/\bMV\s*A\s*(vel|peak|max|wave)?\b|mitral (valve )?a[- ]?(wave|peak|vel)|\bA\s*(vel|wave|peak)\b/i,/a['’′]|prime|tissue|TDI|annul|\/|ratio|dur|VTI|\bAo\b|aort|lat|sept/i,[10,300]]
+  ];
+
+  const UNITS={
+    len:{'mm':1,'cm':10,'m':1000,'':1},
+    vel:{'cm/s':1,'m/s':100,'mm/s':0.1,'':1},
+    vol:{'ml':1,'cm3':1,'l':1000,'':1},
+    pct:{'%':1,'':1}
+  };
+  function conv(v,unit,cls){
+    const u=String(unit||'').replace(/[{}\s]/g,'').toLowerCase();
+    if(cls==='pct' && (u==='1'||u==='ratio'||u==='fraction')) return Math.abs(v)<=1.5?v*100:v;
+    const k=UNITS[cls][u];
+    return k==null?null:v*k;
+  }
+  function score(key){
+    let s=1;
+    if(/user chosen|selected|chosen value/i.test(key)) s=3;
+    else if(/mean|average/i.test(key)) s=2;
+    if(/bi-?plane|\bBP\b/i.test(key)) s+=0.5;
+    return s;
+  }
+  /* Mapeia as medidas achatadas para os campos do laudo */
+  function map(meas){
+    const best={}, unmapped=[];
+    meas.forEach((m,i)=>{
+      const key=[m.name,m.code].concat(m.mods,m.ctx).join(' | ');
+      let hit=null;
+      for(const r of RULES){
+        const [id,,cls,codes,re,not,range]=r;
+        const byCode=codes.length && codes.indexOf(m.code)>=0;
+        if(!byCode && !(re.test(key) && !(not && not.test(key)))) continue;
+        let v=conv(m.value,m.unit,cls); if(v==null) continue;
+        if(id==='GLS') v=Math.abs(v);
+        if(v<range[0]||v>range[1]) continue;
+        hit={id,label:r[1],v,src:m,sc:score(key),i};
+        break;
+      }
+      if(!hit){ unmapped.push(m); return; }
+      const cur=best[hit.id];
+      if(!cur || hit.sc>=cur.sc) best[hit.id]=hit;
+    });
+    return {best,unmapped};
+  }
+  /* Dados do paciente (cabeçalho DICOM) */
+  function patient(ds){
+    const pn=String(S(ds,'00100010')||'');
+    const parts=pn.split('=')[0].split('^').map(x=>x.trim());
+    // DICOM: Sobrenome^Nome^Meio → "Nome Meio Sobrenome"
+    const nome=[parts[1],parts[2],parts[0]].filter(Boolean).join(' ').replace(/\s+/g,' ').trim();
+    const dt=String(S(ds,'00080020')||S(ds,'00080023')||S(ds,'00080021')||'');
+    const bd=String(S(ds,'00100030')||'');
+    let idadeAnos=null, idadeMeses=null;
+    if(/^\d{8}$/.test(bd) && /^\d{8}$/.test(dt)){
+      const y=+dt.slice(0,4)-+bd.slice(0,4), mo=+dt.slice(4,6)-+bd.slice(4,6), d=+dt.slice(6,8)-+bd.slice(6,8);
+      idadeMeses=y*12+mo-(d<0?1:0); idadeAnos=Math.floor(idadeMeses/12);
+    }else{
+      const pa=String(S(ds,'00101010')||''); const m=pa.match(/^(\d+)([DWMY])$/i);
+      if(m){ const n=+m[1], u=m[2].toUpperCase(); idadeMeses=u==='Y'?n*12:u==='M'?n:u==='W'?Math.floor(n/4.35):Math.floor(n/30.4); idadeAnos=Math.floor(idadeMeses/12); }
+    }
+    const sx=String(S(ds,'00100040')||'').toUpperCase();
+    const peso=S(ds,'00101030'), alt=S(ds,'00101020');
+    return {
+      nome, idadeAnos, idadeMeses,
+      sexo: sx==='M'||sx==='F'?sx:null,
+      data: /^\d{8}$/.test(dt)?dt.slice(0,4)+'-'+dt.slice(4,6)+'-'+dt.slice(6,8):null,
+      peso: peso>0?+peso:null,
+      altura: alt>0?(alt<3?alt*100:alt):null   // DICOM guarda altura em metros
+    };
+  }
+  const isSR=ds=>/^1\.2\.840\.10008\.5\.1\.4\.1\.1\.88\./.test(String(S(ds,'00080016')||'')) || S(ds,'00080060')==='SR';
+  /* ---------- REPORT em PDF: recebe o texto já separado em linhas (pdf.js) ----------
+     Reconhece "Nome valor unidade" (ex.: "IVSd 1.0 cm", "SIVd 10 mm", "MV E Vel 0,82 m/s"),
+     inclusive duas colunas na mesma linha e colunas extras de valores (média/mín/máx). */
+  const U_RE=/^(cm\/s|m\/s|mm\/s|mm|cm|m|ml|l|%|cm2|cm²|mmhg|ms|bpm|g|g\/m2|g\/m²|ml\/m2|ml\/m²|cm\/m2|mm\/m2|cm2\/m2|kg|m2|m²)$/i;
+  const NUM_RE=/^[-−]?\d+(?:[.,]\d+)?$/;
+  const PAT_RE=/\b(height|weight|altura|peso|BSA|SC|idade|age|DOB|nasc\w*|birth)\b/i;
+  const pdfNum=s=>parseFloat(String(s).replace('−','-').replace(',','.'));
+  const cleanU=t=>t.replace(/[()\[\]]/g,'');
+  function lineMeas(line){
+    const toks=line.split(/\s+/).filter(Boolean), out=[];
+    let label=[];
+    const skipNums=i=>{ while(i+1<toks.length && NUM_RE.test(toks[i+1])) i++; return i; };
+    for(let i=0;i<toks.length;i++){
+      const t=toks[i];
+      const glued=t.match(/^([-−]?\d+(?:[.,]\d+)?)([a-z%²\/0-9]+)$/i);        // "1.0cm"
+      if(glued && U_RE.test(glued[2]) && label.length){
+        out.push({name:label.join(' '),value:pdfNum(glued[1]),unit:glued[2]}); label=[]; i=skipNums(i); continue;
+      }
+      if(NUM_RE.test(t) && label.length){
+        let j=i+1; while(j<toks.length && NUM_RE.test(toks[j])) j++;             // pula colunas numéricas extras
+        let unit=(j<toks.length && U_RE.test(cleanU(toks[j])))?cleanU(toks[j]):null;
+        const lu=label[label.length-1].match(/^[(\[]([^)\]]+)[)\]]$/);            // "IVSd (cm) 1.0"
+        if(!unit && lu && U_RE.test(lu[1])){ unit=lu[1]; label.pop(); j=skipNums(i); }
+        if(unit && label.length){ out.push({name:label.join(' '),value:pdfNum(t),unit}); label=[]; i=j; continue; }
+        label=[]; i=j-1; continue;                                                  // número sem unidade (razões) — ignora
+      }
+      if(!label.length && U_RE.test(cleanU(t))) continue;                           // unidade solta
+      label.push(t);
+    }
+    return out;
+  }
+  function pdfPatient(txt){
+    const g=re=>{ const m=txt.match(re); return m?m[1].trim():null; };
+    const SEP='[ \\t]*[:：]?[ \\t]*';
+    let nome=g(new RegExp('(?:Nome(?: do paciente)?|Patient(?: Name)?|Paciente|Name)'+SEP+'([^\\n\\t:]{3,70}?)(?=\\s{2,}|\\t|\\n|$|\\s+(?:ID|Sexo|Sex|Gender|Data|Date|DOB|Idade|Age|Nasc\\w*|Birth)\\b)','i'));
+    if(nome){ nome=nome.replace(/\^/g,' , ').replace(/\s+/g,' ').trim(); if(/,/.test(nome)){ const p=nome.split(',').map(x=>x.trim()).filter(Boolean); nome=p.slice(1).concat(p[0]).join(' '); } }
+    const ymd=s=>{ if(!s) return null; const m=s.match(/(\d{1,4})[\/.-](\d{1,2})[\/.-](\d{2,4})/); if(!m) return null;
+      if(m[1].length===4) return [+m[1],+m[2],+m[3]];
+      let d=+m[1],mo=+m[2],y=+m[3]; if(y<100) y+=y>40?1900:2000;
+      if(mo>12 && d<=12){ const t=d; d=mo; mo=t; }                                  // formato americano mm/dd
+      return [y,mo,d]; };
+    const iso=a=>a?a[0]+'-'+String(a[1]).padStart(2,'0')+'-'+String(a[2]).padStart(2,'0'):null;
+    const dob=ymd(g(/(?:DOB|Data de nasc\w*|D\.?\s*Nasc\w*|Nascimento|Birth\s*Date|Date of Birth)[ \t]*[:：]?[ \t]*([\d\/.-]{6,10})/i));
+    const dt=ymd(g(/(?:Data do exame|Data do estudo|Exam Date|Study Date|Date of (?:exam|study)|Data|Date)[ \t]*[:：]?[ \t]*([\d\/.-]{6,10})/i));
+    let idadeMeses=null;
+    if(dob && dt){ idadeMeses=(dt[0]-dob[0])*12+(dt[1]-dob[1])-(dt[2]<dob[2]?1:0); }
+    else { const a=g(/(?:Idade|Age)[ \t]*[:：]?[ \t]*(\d{1,3})/i); if(a) idadeMeses=+a*12; }
+    const sx=g(/(?:Sexo|Sex|Gender|G[eê]nero)[ \t]*[:：]?[ \t]*(M|F|Masc\w*|Fem\w*|Male|Female|Homem|Mulher)\b/i);
+    const h=txt.match(/(?:Altura|Height|Alt\.)[ \t]*[:：]?[ \t]*(\d+(?:[.,]\d+)?)[ \t]*(cm|m)\b/i);
+    const w=txt.match(/(?:Peso|Weight)[ \t]*[:：]?[ \t]*(\d+(?:[.,]\d+)?)[ \t]*(kg|lb)/i);
+    const altura=h?pdfNum(h[1])*(h[2].toLowerCase()==='m'?100:1):null;
+    const peso=w?pdfNum(w[1])*(w[2].toLowerCase()==='lb'?0.4536:1):null;
+    return {
+      nome: nome||'', idadeMeses, idadeAnos: idadeMeses!=null?Math.floor(idadeMeses/12):null,
+      sexo: sx?(/^(M|masc|male|homem)/i.test(sx)?'M':'F'):null,
+      data: iso(dt), peso: peso>0?peso:null, altura: altura>0?altura:null
+    };
+  }
+  function parsePdf(lines){
+    const meas=[]; let ctx='';
+    for(const ln of lines){
+      const ms=lineMeas(ln);
+      if(!ms.length){ const t=ln.trim(); if(t && t.length<=40 && !/\d/.test(t) && !/:/.test(t)) ctx=t; continue; }
+      ms.forEach(m=>{ if(PAT_RE.test(m.name)) return;
+        meas.push({name:m.name,code:'',scheme:'PDF',value:m.value,unit:m.unit.replace('²','2'),unitM:m.unit,mods:[],ctx:ctx?[ctx]:[]}); });
+    }
+    return {meas,p:pdfPatient(lines.join('\n'))};
+  }
+  return {parse,flatten,map,patient,isSR,S,RULES,parsePdf};
+})();
+/* PACS-CORE-END */
+
+/* ====================== UI: botão PACS + lista de exames ====================== */
+(function(){
+  const HEAD_BYTES=1<<20;   // lê só o 1º MB de cada imagem (cabeçalho); SR é lido inteiro
+  let pacsRoot=null;
+
+  // botão na barra superior (antes de "Pasta…") e modal
+  const b=document.createElement('button');
+  b.id='btnPACS'; b.textContent='PACS'; b.title='Importar medidas do Affiniti 70 (DICOM/PACS) — Ctrl+I';
+  $('btnPasta').parentNode.insertBefore(b,$('btnPasta'));
+  document.body.insertAdjacentHTML('beforeend',`
+<div id="modalPacs" class="modal" style="display:none">
+  <div class="modal-bg" data-pacs-close></div>
+  <div class="modal-box" style="width:680px">
+    <div class="modal-h"><h3>Importar exame · Affiniti 70 (PACS / DICOM)</h3><button class="modal-x" data-pacs-close>×</button></div>
+    <div class="modal-tools">
+      <button id="pacsRootBtn" title="Escolha a pasta onde o Affiniti salva os exames (ex.: C:\\ECO-PACS\\exames)">Pasta dos exames…</button>
+      <button id="pacsAltBtn" title="Selecionar diretamente a pasta de UM exame (pendrive, CD, etc.)">Abrir pasta de um exame…</button>
+      <input type="file" id="pacsFiles" webkitdirectory multiple style="display:none">
+      <button id="pacsPdfBtn" title="Abrir o REPORT em PDF gerado pelo Affiniti">Abrir PDF do report…</button>
+      <input type="file" id="pacsPdf" accept=".pdf,application/pdf" style="display:none">
+      <input id="pacsSearch" placeholder="Buscar paciente…" style="flex:1">
+    </div>
+    <div class="modal-list" id="pacsList"></div>
+    <div class="modal-foot"><span id="pacsFoot"></span></div>
+  </div>
+</div>`);
+  document.querySelectorAll('[data-pacs-close]').forEach(x=>x.onclick=closePacs);
+  const vt=$('vtag'); if(vt) vt.textContent='v.pacs-66';
+
+  /* --- persistência da pasta raiz (IndexedDB guarda o "handle" da pasta) --- */
+  function idb(mode,fn){
+    return new Promise((res,rej)=>{
+      const r=indexedDB.open('encor_eco_pacs',1);
+      r.onupgradeneeded=()=>r.result.createObjectStore('h');
+      r.onerror=()=>rej(r.error);
+      r.onsuccess=()=>{ const tx=r.result.transaction('h',mode); const q=fn(tx.objectStore('h')); tx.oncomplete=()=>res(q&&q.result); tx.onerror=()=>rej(tx.error); };
+    });
+  }
+  async function loadRoot(){
+    try{ const h=await idb('readonly',st=>st.get('root')); if(h) pacsRoot=h; }catch(e){}
+    if(pacsRoot){ b.classList.add('set'); b.title='PACS: '+pacsRoot.name+' — Ctrl+I'; }
+  }
+  async function ensurePerm(h){
+    if(!h.queryPermission) return true;
+    if(await h.queryPermission({mode:'read'})==='granted') return true;
+    return (await h.requestPermission({mode:'read'}))==='granted';
+  }
+  async function pickRoot(){
+    if(!('showDirectoryPicker' in window)){ $('pacsFiles').click(); return; }
+    try{
+      pacsRoot=await window.showDirectoryPicker({id:'ecopacs',mode:'read'});
+      try{ await idb('readwrite',st=>st.put(pacsRoot,'root')); }catch(e){}
+      b.classList.add('set'); b.title='PACS: '+pacsRoot.name;
+      toast('Pasta PACS configurada: '+pacsRoot.name);
+      listExams();
+    }catch(e){
+      if(e && e.name==='AbortError') return;
+      console.error('[PACS]',e);
+      toast('Não foi possível abrir a pasta ('+(e&&e.name||e)+'). Use "Abrir pasta de um exame…".',true);
+    }
+  }
+
+  async function openPacs(){
+    $('modalPacs').style.display='flex';
+    $('pacsSearch').value='';
+    if(!pacsRoot) await loadRoot();
+    if(pacsRoot) listExams();
+    else $('pacsList').innerHTML='<div class="pacs-sum">Nenhuma pasta configurada.<br><br>Clique em <b>Pasta dos exames…</b> e escolha a pasta de rede onde o Affiniti 70 grava os REPORTs (PDF) e as imagens — só na primeira vez. Ou use <b>Abrir PDF do report…</b> para abrir um PDF avulso.</div>';
+  }
+  function closePacs(){ $('modalPacs').style.display='none'; }
+  window.closePacs=closePacs;
+
+  const isImgExt=n=>/\.(jpe?g|png|bmp|gif|avi|mp4|wmv|txt|xml|html?|pdf|ini|bat|exe|dll|db|log|inf|lnk)$/i.test(n)||/^DICOMDIR$/i.test(n);
+  const isPdf=n=>/\.pdf$/i.test(n);
+  async function collect(dir,out,depth,pdfs){
+    for await (const [n,h] of dir.entries()){
+      if(h.kind==='file'){ if(pdfs && isPdf(n)) pdfs.push(h); else if(!isImgExt(n) && !n.startsWith('.')) out.push(h); }
+      else if(depth<6) await collect(h,out,depth+1,pdfs);
+    }
+    return out;
+  }
+  // pasta de um exame: se houver REPORT em PDF, usa o PDF mais recente; senão lê os DICOM
+  async function importFolder(dh,depth){
+    const pdfs=[], dcm=await collect(dh,[],depth||0,pdfs);
+    if(pdfs.length) return importPdf(await newestFile(pdfs));
+    return importHandles(dcm);
+  }
+  async function newestFile(list){
+    let best=null;
+    for(const x of list){ const f=x instanceof File?x:await x.getFile(); if(!best||f.lastModified>best.lastModified) best=f; }
+    return best;
+  }
+
+  /* ---- leitor de PDF (pdf.js, carregado só quando necessário) ---- */
+  let _pdfjs=null;
+  function loadPdfJs(){
+    if(_pdfjs) return _pdfjs;
+    return _pdfjs=new Promise((res,rej)=>{
+      const s=document.createElement('script');
+      s.src='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js';
+      s.onload=()=>{ const lib=window.pdfjsLib; lib.GlobalWorkerOptions.workerSrc='https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js'; res(lib); };
+      s.onerror=()=>{ _pdfjs=null; rej(new Error('não foi possível carregar o leitor de PDF (verifique a internet)')); };
+      document.head.appendChild(s);
+    });
+  }
+  // extrai o texto do PDF e remonta as linhas pela posição na página
+  async function pdfLines(file){
+    const lib=await loadPdfJs();
+    const doc=await lib.getDocument({data:new Uint8Array(await file.arrayBuffer())}).promise;
+    const lines=[];
+    for(let pg=1;pg<=doc.numPages;pg++){
+      const tc=await (await doc.getPage(pg)).getTextContent();
+      const rows=[];
+      tc.items.forEach(it=>{
+        if(!it.str||!it.str.trim()) return;
+        const x=it.transform[4], y=it.transform[5];
+        let r=rows.find(r=>Math.abs(r.y-y)<3); if(!r) rows.push(r={y,items:[]});
+        r.items.push({x,w:it.width||0,s:it.str.trim()});
+      });
+      rows.sort((a,b)=>b.y-a.y);
+      rows.forEach(r=>{
+        r.items.sort((a,b)=>a.x-b.x);
+        let s='', end=null;
+        r.items.forEach(it=>{ if(end!=null){ const gap=it.x-end; s+=gap>8?'   ':gap>1?' ':''; } s+=it.s; end=it.x+it.w; });
+        lines.push(s);
+      });
+    }
+    return lines;
+  }
+  async function importPdf(file){
+    const L=$('pacsList');
+    $('modalPacs').style.display='flex';
+    L.innerHTML='<div class="pacs-sum">Lendo o REPORT em PDF: '+escapeHtml(file.name)+'…</div>';
+    let lines;
+    try{ lines=await pdfLines(file); }
+    catch(e){ console.error('[PACS PDF]',e); L.innerHTML='<div class="pacs-sum warn">Não foi possível ler o PDF: '+escapeHtml(e.message||e)+'</div>'; return; }
+    const r=PACS.parsePdf(lines);
+    apply({p:r.p,meas:r.meas,pdf:{name:file.name,lines}},0,1);
+  }
+  // nome da pasta gerada pelo receptor (storescp -sp): SOBRENOME^NOME_AAAAMMDD_HHMMSSmmm
+  function folderInfo(name){
+    const m=name.match(/(\d{8})[_-]?(\d{4,6})?/);
+    let dt='', nome=name;
+    if(m){ const d=m[1]; dt=d.slice(6,8)+'/'+d.slice(4,6)+'/'+d.slice(0,4)+(m[2]?' '+m[2].slice(0,2)+':'+m[2].slice(2,4):''); nome=name.replace(m[0],''); }
+    nome=nome.replace(/^(ECO|STUDY|ST)[_-]/i,'').replace(/[\^_]+/g,' ').replace(/\s+/g,' ').trim()||name;
+    return {nome,dt,sort:m?m[1]+(m[2]||''):'0'};
+  }
+  const pdfCache=new Map();   // evita reler metadados de centenas de PDFs na pasta de rede a cada busca
+  async function listExams(){
+    const L=$('pacsList');
+    try{ if(!(await ensurePerm(pacsRoot))){ L.innerHTML='<div class="pacs-sum">Permissão de leitura negada. Clique em <b>Pasta dos exames…</b>.</div>'; return; } }
+    catch(e){ L.innerHTML='<div class="pacs-sum">Clique em <b>Pasta dos exames…</b> para liberar o acesso à pasta.</div>'; return; }
+    L.innerHTML='<div class="pacs-sum">Lendo pasta…</div>';
+    const dirs=[], pdfs=[]; let looseFiles=0;
+    try{ for await (const [n,h] of pacsRoot.entries()){ if(h.kind==='directory') dirs.push({n,h,...folderInfo(n)}); else if(isPdf(n)) pdfs.push({n,h}); else if(!isImgExt(n)) looseFiles++; } }
+    catch(e){ L.innerHTML='<div class="pacs-sum">Erro ao ler a pasta: '+escapeHtml(e.message||e)+'</div>'; return; }
+    dirs.sort((a,b)=>b.sort.localeCompare(a.sort)||a.n.localeCompare(b.n));
+    const q=($('pacsSearch').value||'').toLowerCase();
+    const rows=dirs.filter(d=>!q||d.nome.toLowerCase().includes(q)||d.n.toLowerCase().includes(q));
+    L.innerHTML='';
+    // REPORTs em PDF soltos na pasta: cada PDF = um exame (mais recente primeiro)
+    for(const x of pdfs){ try{ const f=pdfCache.get(x.n)||await x.h.getFile(); pdfCache.set(x.n,f); x.f=f; x.t=f.lastModified; }catch(e){ x.t=0; } }
+    pdfs.sort((a,b)=>b.t-a.t);
+    const pRows=pdfs.filter(x=>!q||x.n.toLowerCase().includes(q)).slice(0,300);
+    pRows.forEach(x=>{
+      const d=x.t?new Date(x.t):null;
+      const dt=d?d.toLocaleDateString('pt-BR')+' '+d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}):'';
+      const r=document.createElement('div'); r.className='pat-row';
+      r.innerHTML='<span class="pat-nm">📄 '+escapeHtml(x.n.replace(/\.pdf$/i,'').replace(/[\^_]+/g,' '))+'</span><span class="pat-dt">'+escapeHtml(dt)+'</span>';
+      r.title=x.n;
+      r.onclick=()=>importPdf(x.f);
+      L.appendChild(r);
+    });
+    if(looseFiles){
+      const r=document.createElement('div'); r.className='pat-row';
+      r.innerHTML='<span class="pat-nm">📂 Arquivos soltos nesta pasta ('+looseFiles+')</span><span class="pat-dt">importar</span>';
+      r.onclick=async()=>importHandles(await collect(pacsRoot,[],6));   // só o nível atual
+      L.appendChild(r);
+    }
+    rows.forEach(d=>{
+      const r=document.createElement('div'); r.className='pat-row';
+      r.innerHTML='<span class="pat-nm">'+escapeHtml(d.nome)+'</span><span class="pat-dt">'+escapeHtml(d.dt||d.n)+'</span>';
+      r.title=d.n;
+      r.onclick=()=>importFolder(d.h,0);
+      L.appendChild(r);
+    });
+    if(!rows.length && !looseFiles && !pRows.length) L.innerHTML='<div class="pacs-sum">Nenhum exame em <b>'+escapeHtml(pacsRoot.name)+'</b>'+(q?' para essa busca':' ainda')+'.<br>Finalize o exame no Affiniti para o REPORT chegar nesta pasta.</div>';
+    $('pacsFoot').textContent=pacsRoot.name+' · '+(pdfs.length?pdfs.length+' REPORT(s) PDF · ':'')+dirs.length+' pasta(s) — clique para importar';
+  }
+
+  async function readDs(file){
+    const full=file.size<=HEAD_BYTES;
+    let buf=await file.slice(0,full?file.size:HEAD_BYTES).arrayBuffer();
+    let ds=PACS.parse(buf,{stopAtPixel:true});
+    if(!full && PACS.isSR(ds)){ buf=await file.arrayBuffer(); ds=PACS.parse(buf,{}); }
+    if(ds.__deflatedAt!=null && 'DecompressionStream' in window){
+      const raw=new Uint8Array(await file.arrayBuffer()).subarray(ds.__deflatedAt);
+      const inf=await new Response(new Blob([raw]).stream().pipeThrough(new DecompressionStream('deflate-raw'))).arrayBuffer();
+      Object.assign(ds,PACS.parse(inf,{noMeta:true}));
+    }
+    return ds;
+  }
+  async function importHandles(handles){ const fs=[]; for(const h of handles){ try{ fs.push(await h.getFile()); }catch(e){} } return importFiles(fs); }
+
+  async function importFiles(files){
+    const L=$('pacsList');
+    $('modalPacs').style.display='flex';
+    L.innerHTML='<div class="pacs-sum">Lendo '+files.length+' arquivo(s) DICOM…</div>';
+    const studies={};
+    let nDcm=0;
+    for(const f of files){
+      let ds; try{ ds=await readDs(f); }catch(e){ continue; }
+      if(!ds || !ds['0020000D'] && !ds['00100010'] && !ds['0040A730']) continue;
+      nDcm++;
+      const uid=String(PACS.S(ds,'0020000D')||'?');
+      const st=studies[uid]||(studies[uid]={hdr:null,date:String(PACS.S(ds,'00080020')||''),meas:[],nSR:0,n:0});
+      st.n++;
+      if(!st.hdr || (!st.hdr['00101030'] && ds['00101030'])) st.hdr=ds;
+      if(PACS.isSR(ds)){ st.nSR++; st.meas.push(...PACS.flatten(ds)); }
+    }
+    const list=Object.values(studies).sort((a,b)=>(b.meas.length>0)-(a.meas.length>0)||b.date.localeCompare(a.date));
+    if(!list.length){ L.innerHTML='<div class="pacs-sum warn">Nenhum arquivo DICOM encontrado nessa pasta.</div>'; return; }
+    apply(list[0], nDcm, list.length);
+  }
+
+  function apply(st, nDcm, nStudies){
+    const L=$('pacsList');
+    const p=st.p||PACS.patient(st.hdr);
+    const {best,unmapped}=PACS.map(st.meas);
+    const filled=[];
+    const set=(id,v,label,orig)=>{ const el=$(id); if(!el||v==null||v==='') return; el.value=v; el.classList.add('pacs-fill'); filled.push([label,v,orig]); };
+    // identificação
+    if(p.nome) set('pNome',p.nome.toUpperCase(),'Nome',st.pdf?'REPORT PDF':'Paciente DICOM');
+    if(p.idadeAnos!=null){
+      const ped=$('modelo')&&$('modelo').value==='pediatrico';
+      set('pIdade', ped && p.idadeAnos<2 ? p.idadeMeses+'m' : p.idadeAnos, 'Idade', ped&&p.idadeAnos<2?'meses':'anos');
+    }
+    if(p.sexo) set('sexo',p.sexo,'Sexo',p.sexo==='M'?'Masculino':'Feminino');
+    if(p.data) set('pData',p.data,'Data do exame','');
+    if(p.peso) set('peso',Math.round(p.peso*10)/10,'Peso (kg)','');
+    if(p.altura) set('altura',Math.round(p.altura),'Altura (cm)','');
+    // medidas
+    const units={len:'mm',vel:'cm/s',vol:'ml',pct:'%'};
+    PACS.RULES.forEach(r=>{
+      const h=best[r[0]]; if(!h) return;
+      const v=Math.round(h.v*10)/10;
+      set(r[0], v, r[1]+' ('+units[r[2]]+')', h.src.name+(h.src.unit?' ['+h.src.value+' '+h.src.unit+']':''));
+    });
+    compute();
+    setTimeout(()=>document.querySelectorAll('.pacs-fill').forEach(x=>x.classList.remove('pacs-fill')),15000);
+    window.__pacsLast={study:st,best,unmapped,patient:p};
+
+    const nMed=Object.keys(best).length;
+    let h='<div class="pacs-sum">';
+    if(st.pdf) h+='<div>REPORT em PDF: '+escapeHtml(st.pdf.name)+' · '+st.meas.length+' medida(s) encontradas · <b>'+nMed+'</b> preenchida(s).</div>';
+    else h+='<div>'+nDcm+' arquivo(s) DICOM lidos · '+st.nSR+' relatório(s) SR · <b>'+nMed+'</b> medida(s) preenchida(s).</div>';
+    if(st.pdf && !st.pdf.lines.length) h+='<div class="warn">⚠ Esse PDF não tem texto (é uma imagem/digitalização) — não dá para ler as medidas.</div>';
+    else if(st.pdf && !nMed) h+='<div class="warn">⚠ Nenhuma medida reconhecida no PDF. Abra "Texto lido do PDF" abaixo e envie uma foto para ajuste.</div>';
+    if(nStudies>1) h+='<div class="warn">A pasta tinha '+nStudies+' exames diferentes — importado o mais recente com medidas.</div>';
+    if(!st.pdf && !st.nSR) h+='<div class="warn">⚠ Nenhum SR (Structured Report) de medidas nesse exame. No Affiniti 70, habilite o envio do SR no destino DICOM (Setup ▸ DICOM ▸ Store ▸ "Structured Reports"/SR) e reenvie o exame. Só os dados do paciente foram importados.</div>';
+    h+='<h4>Preenchido automaticamente</h4><table>';
+    filled.forEach(f=>{ h+='<tr><td>'+escapeHtml(f[0])+'</td><td class="v">'+escapeHtml(String(f[1]).replace('.',','))+'</td><td class="o">'+escapeHtml(f[2]||'')+'</td></tr>'; });
+    h+='</table>';
+    if(unmapped.length){
+      h+='<details><summary>'+unmapped.length+' medida(s) do exame sem campo correspondente no laudo (Doppler, gradientes etc. — digite manualmente se necessário)</summary><table>';
+      unmapped.forEach(m=>{ h+='<tr><td>'+escapeHtml(m.name)+(m.mods.length?' <span class="o">('+escapeHtml(m.mods.join('; '))+')</span>':'')+'</td><td class="v">'+escapeHtml(String(Math.round(m.value*100)/100).replace('.',','))+' '+escapeHtml(m.unit)+'</td></tr>'; });
+      h+='</table></details>';
+    }
+    if(st.pdf && st.pdf.lines.length) h+='<details><summary>Texto lido do PDF ('+st.pdf.lines.length+' linhas)</summary><div style="max-height:220px;overflow:auto;font:11px/1.35 ui-monospace,monospace;white-space:pre-wrap;margin-top:4px">'+escapeHtml(st.pdf.lines.join('\n'))+'</div></details>';
+    h+='<div class="hint" style="margin-top:8px">Campos importados ficam destacados em verde por alguns segundos. <b>Revise os valores antes de liberar o laudo.</b></div>';
+    h+='<div style="margin-top:10px;text-align:right"><button id="pacsOk" style="background:var(--accent-d);color:#fff;border:none;padding:6px 16px;border-radius:6px;cursor:pointer">OK</button></div></div>';
+    L.innerHTML=h;
+    $('pacsOk').onclick=closePacs;
+    $('pacsFoot').textContent=(p.nome||'Paciente')+(p.data?' · '+p.data.split('-').reverse().join('/'):'');
+    toast('PACS: '+nMed+' medida(s) importada(s)'+(p.nome?' — '+p.nome:''));
+  }
+
+  b.onclick=openPacs;
+  $('pacsRootBtn').onclick=pickRoot;
+  $('pacsAltBtn').onclick=()=>$('pacsFiles').click();
+  $('pacsFiles').onchange=async e=>{
+    const all=[...e.target.files]; e.target.value='';
+    const pdfs=all.filter(f=>isPdf(f.name));
+    if(pdfs.length) return importPdf(await newestFile(pdfs));
+    const fs=all.filter(f=>!isImgExt(f.name)); if(fs.length) importFiles(fs);
+  };
+  $('pacsPdfBtn').onclick=()=>$('pacsPdf').click();
+  $('pacsPdf').onchange=e=>{ const f=e.target.files[0]; e.target.value=''; if(f) importPdf(f); };
+  let _pacsQ; $('pacsSearch').addEventListener('input',()=>{ clearTimeout(_pacsQ); _pacsQ=setTimeout(()=>{ if(pacsRoot) listExams(); },300); });
+  document.addEventListener('keydown',e=>{
+    if(e.key==='Escape' && $('modalPacs').style.display!=='none') closePacs();
+    const mod=navigator.platform.toLowerCase().includes('mac')?e.metaKey:e.ctrlKey;
+    if(mod && !e.shiftKey && e.key.toLowerCase()==="i"){ e.preventDefault(); openPacs(); }
+  });
+  loadRoot();
+})();
+</script>
 </body>
 </html>
