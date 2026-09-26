@@ -377,6 +377,7 @@
           <tr><td class="nm">Diâmetro basal (4-câmaras)</td><td class="ip"><input class="mm" id="VDdiam"></td><td class="un">mm</td><td class="rf">25–41</td><td class="vl">—</td></tr>
           <tr><td class="nm">TAPSE</td><td class="ip"><input class="mm" id="TAPSE"></td><td class="un">mm</td><td class="rf">≥17</td><td class="vl">—</td></tr>
           <tr><td class="nm">FAC (Fractional Area Change)</td><td class="ip"><input class="mm" id="FAC"></td><td class="un">%</td><td class="rf">≥35</td><td class="vl">—</td></tr>
+          <tr><td class="nm">Onda S′ tricúspide (Doppler tecidual)</td><td class="ip"><input class="mm" id="Sprime"></td><td class="un">cm/s</td><td class="rf">≥9,5</td><td class="vl">—</td></tr>
         </table>
       </div>
       <div class="mblock">
@@ -778,6 +779,7 @@ function compute(){
   flagInput('VDdiam','25-41');  // VD basal: igual para M/F
   flagInput('TAPSE','17-100');
   flagInput('FAC','35-100');
+  flagInput('Sprime','9.5-100');
 
   const set=(id,v,d=1)=>{const r=$(id);if(r)r.querySelector('.vl').textContent=fmt(v,d);return v;};
   const M={};
@@ -848,7 +850,7 @@ function compute(){
   MEAS={sc,peso,alt,DDVE,DSVE,SIV,PP,idxDA,idxDSC,erp,massa,imassa,imassah,vtd,vts,fe,fenc,
         FEsimp,feUsada,feMetodo,
         GLS:(num('GLS')!=null ? -Math.abs(num('GLS')) : null),
-        AEdiam,AEvol,aeidx,VDdiam:num('VDdiam'),TAPSE:num('TAPSE'),FAC:num('FAC'),ADvol,adidx,
+        AEdiam,AEvol,aeidx,VDdiam:num('VDdiam'),TAPSE:num('TAPSE'),FAC:num('FAC'),Sprime:num('Sprime'),ADvol,adidx,
         AoRaiz,aoidx,AoAsc,aoascidx,AoArco:num('AoArco'),
         E,A,es,el,ea,eesep,eelat,eemed,TD:num('TD'),psap,PAD:pad,sexo,geom:g,RNORM,
         // campos pediátricos extras
@@ -1083,13 +1085,15 @@ function grade(){
     auto.desc['strain_auto']={seg:'strain', t:dDescStrain};
     auto.concl['strain']=`Strain longitudinal global do ventrículo esquerdo ${grauConcl}: ${disp} (VN: -18 a -22%).`;
   }
-  // ---- VD: disfunção sistólica do VD (TAPSE <17 OU FAC <35, ASE/EACVI) ----
+  // ---- VD: disfunção sistólica do VD (TAPSE <17 OU FAC <35 OU S′ <9,5 cm/s, ASE/EACVI) ----
   const tapseLow = m.TAPSE!=null && m.TAPSE<17;
   const facLow   = m.FAC!=null   && m.FAC<35;
-  if(tapseLow || facLow){
+  const sLow     = !isPedM && m.Sprime!=null && m.Sprime<9.5;   // v.pacs-66: onda S′ tricúspide (corte adulto)
+  if(tapseLow || facLow || sLow){
     const detalhes=[];
     if(m.TAPSE!=null) detalhes.push(`TAPSE ${fmt(m.TAPSE,0)} mm`);
     if(m.FAC!=null)   detalhes.push(`FAC ${fmt(m.FAC,0)}%`);
+    if(m.Sprime!=null) detalhes.push(`S′ ${fmt(m.Sprime,1)} cm/s`);
     const paren = detalhes.length ? ` (${detalhes.join(' / ')})` : '';
     auto.desc['cvd_auto_disf']={seg:'cvd', t:`Função sistólica do ventrículo direito reduzida${paren}.`};
     auto.concl['disf_vd']=`Disfunção sistólica do ventrículo direito${paren}.`;
@@ -2505,6 +2509,7 @@ const MROWS=[
  ['Diâmetro basal (4-câmaras)','VDdiam','mm','25–41',[25,41],0],
  ['TAPSE','TAPSE','mm','≥17',[17,null],0],
  ['FAC','FAC','%','≥35',[35,null],0],
+ ['Onda S′ tricúspide','Sprime','cm/s','≥9,5',[9.5,null],1],
  ['g','ÁTRIO DIREITO'],
  ['Volume','ADvol','ml','',null,0],
  ['Índice de volume','adidx','ml/m²','<30',[null,30],1],
@@ -2565,6 +2570,7 @@ const PED_MROWS = [
  ['Comprimento longitudinal','VDlong','mm','',null,0],
  ['TAPSE','TAPSE','mm','','',0],
  ['FAC','FAC','%','',null,0],
+ ['Onda S′ tricúspide','Sprime','cm/s','',null,1],
  ['g','VALVAS ATRIOVENTRICULARES'],
  ['Anel mitral','MvAnn','mm',null,null,1],
  ['Anel tricúspide','TvAnn','mm',null,null,1],
@@ -3838,7 +3844,9 @@ const PACS=(function(){
     ['VDmed','VD diâmetro médio','len',[],/RVD2|\bRV\s*mid|right ventric.*mid/i,null,[8,75]],
     ['TAPSE','TAPSE','len',[],/TAPSE|tricuspid annular plane systolic excursion/i,null,[2,50]],
     ['VDdiam','VD diâmetro basal','len',[],/RVD1|\bRV\s*(basal|base)|\bRVID\s*d?\b|\bRVIDd|right ventric.*(basal|internal diastolic dimension)|\bRVD\b/i,/systol|RVIDs|RVOT|wall|RVAW|FAC|area|strain/i,[8,85]],
-    ['FAC','FAC do VD','pct',[],/\bFAC\b|fractional area change/i,null,[5,90]],
+    ['FAC','FAC do VD','pct',[],/\bFAC\b|RV\s*FAC|fractional area change/i,null,[5,90]],
+    ['_RVEDA','Área diastólica do VD','area',[],/\bRV\s*EDA\b|\bRVEDA\b|\bRV\s*Area\s*d\b|\bRVAd\b|right ventric\w*.*(end[- ]?)?diastolic area/i,/index|\/\s*BSA/i,[3,70]],
+    ['_RVESA','Área sistólica do VD','area',[],/\bRV\s*ESA\b|\bRVESA\b|\bRV\s*Area\s*s\b|\bRVAs\b|right ventric\w*.*(end[- ]?)?systolic area/i,/index|\/\s*BSA/i,[1,60]],
     ['AoAnn','Anel aórtico','len',['17996-9'],/\bAo(rtic)?\s*(valve\s*)?ann(ulus|ular)?\b|\bAV\s*ann/i,/vel|area|VTI|grad/i,[6,45]],
     ['AoStj','Junção sinotubular','len',['17995-1'],/sino-?tubular|\bST\s*junc|\bSTJ\b/i,/index|\/\s*BSA/i,[6,65]],
     ['AoAsc','Aorta ascendente','len',['18012-4'],/\basc(ending)?\.?\s*ao|\bao(rta)?\s*asc|ascending aorta|aorta ascendente/i,/index|\/\s*BSA/i,[8,90]],
@@ -3846,6 +3854,7 @@ const PACS=(function(){
     ['AoIsthmus','Istmo aórtico','len',[],/isthmus/i,null,[2,60]],
     ['AoArco','Arco aórtico','len',['18011-6'],/\bao(rtic)?\s*arch|\barch\b/i,/vel|grad/i,[6,60]],
     ['AoRaiz','Raiz da aorta','len',['18015-7'],/\bao(rtic)?\s*root|sinus(es)? of valsalva|\bao\s*sinus|\bAoD\b|\bAo\s*(diam|dimension)\b|raiz (da )?ao(rta)?/i,/index|\/\s*BSA|ratio|LA\s*\/|\/\s*LA/i,[8,85]],
+    ['Sprime','Onda S′ tricúspide','vel',[],/(\bRV|\bTV|tric\w*)\W{0,3}(free wall\s*|lat\w*\s*|ann\w*\s*)?S\s*['’′`´ˋ‘ʹ]|\bS\s*['’′`´ˋ‘ʹ]\s*(vel\w*\s*)?\(?\s*(RV|TV|tric)|\bRV\s*S\s*(vel|wave|peak)|\bRV\s*Sm\b|tricuspid annul\w*.*systolic/i,/E\s*['’′`´ˋ‘ʹ]|a['’′`´ˋ‘ʹ]|\/|ratio|VTI|mitral|\bMV\b|\bLV\b/i,[2,30]],
     ['Elat','E′ lateral','vel',[],/\blat\w*\.?\s*E\W{0,2}\s*vel|(e['’′`´ˋ‘ʹ]|e\s*prime|\bEa\b|\bEm\b|early diastolic tissue).*lat|lat.*(e['’′`´ˋ‘ʹ]|e\s*prime|\bEa\b|\bEm\b)/i,/E\s*\/\s*e|\/|ratio|a['’′`´ˋ‘ʹ]|s['’′`´ˋ‘ʹ]/i,[1,35]],
     ['Esep','E′ septal','vel',[],/\b(sept|med)\w*\.?\s*E\W{0,2}\s*vel|(e['’′`´ˋ‘ʹ]|e\s*prime|\bEa\b|\bEm\b|early diastolic tissue).*(sept|medial)|(sept|medial).*(e['’′`´ˋ‘ʹ]|e\s*prime|\bEa\b|\bEm\b)/i,/E\s*\/\s*e|\/|ratio|a['’′`´ˋ‘ʹ]|s['’′`´ˋ‘ʹ]/i,[1,35]],
     // IT / PSAP (Philips: "TR Vmax" → "Vel 2.5 m/s", "PG 25 mmHg"; "RAP"; "RVSP")
@@ -3868,7 +3877,8 @@ const PACS=(function(){
     vel:{'cm/s':1,'m/s':100,'mm/s':0.1,'':1},
     vol:{'ml':1,'cm3':1,'cm³':1,'l':1000,'':1},
     pct:{'%':1,'':1},
-    pg:{'mmhg':1,'':1}
+    pg:{'mmhg':1,'':1},
+    area:{'cm2':1,'cm²':1,'mm2':0.01,'':1}
   };
   function conv(v,unit,cls){
     const u=String(unit||'').replace(/[{}\s]/g,'').toLowerCase();
@@ -4269,6 +4279,11 @@ const PACS=(function(){
       const v=Math.round(h.v*k+1e-9)/k;
       set(r[0], v, r[1]+' ('+units[r[2]]+')', h.src.name+(h.src.unit?' ['+h.src.value+' '+h.src.unit+']':''));
     });
+    // FAC calculado pelas áreas do VD (RVEDA/RVESA) quando o FAC não vier pronto
+    if(!best.FAC && best._RVEDA && best._RVESA && best._RVEDA.v>best._RVESA.v){
+      const fac=Math.round((best._RVEDA.v-best._RVESA.v)/best._RVEDA.v*100);
+      set('FAC',fac,'FAC do VD (%)','calculado: RVEDA '+(Math.round(best._RVEDA.v*10)/10)+' / RVESA '+(Math.round(best._RVESA.v*10)/10)+' cm²');
+    }
     // IT → PSAP: fica guardado; preenche quando o grau do refluxo tricúspide for escolhido
     const trV=best._TRVmax?Math.round(best._TRVmax.v)/100:null;          // m/s, 2 casas (como no aparelho)
     const trPG=best._TRPG?Math.round(best._TRPG.v):(trV!=null?Math.round(4*trV*trV):null);
