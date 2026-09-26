@@ -4177,29 +4177,52 @@ const PACS=(function(){
     return {nome,dt,sort:m?m[1]+(m[2]||''):'0'};
   }
   const pdfCache=new Map();   // evita reler metadados de centenas de PDFs na pasta de rede a cada busca
+  const dirTimeCache=new Map();   // data (ms) do arquivo mais recente de cada pasta de exame
+  // data de uma pasta = arquivo mais recente dentro dela (1º nível; se só houver subpastas, desce mais um nível)
+  async function dirTime(h,depth){
+    let t=0, n=0;
+    for await (const [nm,x] of h.entries()){
+      if(n++>400) break;
+      if(x.kind==='file'){ try{ const f=await x.getFile(); if(f.lastModified>t) t=f.lastModified; }catch(e){} }
+      else if(!depth){ const u=await dirTime(x,1); if(u>t) t=u; }
+    }
+    return t;
+  }
+  const fmtDT=t=>{ if(!t) return ''; const d=new Date(t); return d.toLocaleDateString('pt-BR')+' '+d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}); };
   async function listExams(){
     const L=$('pacsList');
     try{ if(!(await ensurePerm(pacsRoot))){ L.innerHTML='<div class="pacs-sum">Permissão de leitura negada. Clique em <b>Pasta dos exames…</b>.</div>'; return; } }
     catch(e){ L.innerHTML='<div class="pacs-sum">Clique em <b>Pasta dos exames…</b> para liberar o acesso à pasta.</div>'; return; }
     L.innerHTML='<div class="pacs-sum">Lendo pasta…</div>';
-    const dirs=[], pdfs=[]; let looseFiles=0;
-    try{ for await (const [n,h] of pacsRoot.entries()){ if(h.kind==='directory') dirs.push({n,h,...folderInfo(n)}); else if(isPdf(n)) pdfs.push({n,h}); else if(!isImgExt(n)) looseFiles++; } }
-    catch(e){ L.innerHTML='<div class="pacs-sum">Erro ao ler a pasta: '+escapeHtml(e.message||e)+'</div>'; return; }
-    dirs.sort((a,b)=>b.sort.localeCompare(a.sort)||a.n.localeCompare(b.n));
+    const items=[]; let looseFiles=0, nPdf=0, nDir=0;
+    try{
+      for await (const [n,h] of pacsRoot.entries()){
+        if(h.kind==='directory'){ nDir++; const fi=folderInfo(n); items.push({kind:'dir',n,h,nome:fi.nome,nameTs:fi.sort}); }
+        else if(isPdf(n)){ nPdf++; items.push({kind:'pdf',n,h,nome:n.replace(/\.pdf$/i,'').replace(/[\^_]+/g,' ').trim()}); }
+        else if(!isImgExt(n)) looseFiles++;
+      }
+    }catch(e){ L.innerHTML='<div class="pacs-sum">Erro ao ler a pasta: '+escapeHtml(e.message||e)+'</div>'; return; }
     const q=($('pacsSearch').value||'').toLowerCase();
-    const rows=dirs.filter(d=>!q||d.nome.toLowerCase().includes(q)||d.n.toLowerCase().includes(q));
+    const vis=items.filter(x=>!q||x.nome.toLowerCase().includes(q)||x.n.toLowerCase().includes(q));
+    // datas: PDF = data do arquivo; pasta = arquivo mais recente dentro dela (lidas em paralelo, com cache)
+    let done=0;
+    const tick=()=>{ if(++done%20===0) L.innerHTML='<div class="pacs-sum">Lendo pasta… '+done+'/'+vis.length+'</div>'; };
+    const work=vis.map(x=>async()=>{
+      try{
+        if(x.kind==='pdf'){ const f=pdfCache.get(x.n)||await x.h.getFile(); pdfCache.set(x.n,f); x.f=f; x.t=f.lastModified; }
+        else { if(!dirTimeCache.has(x.n)) dirTimeCache.set(x.n,await dirTime(x.h,0)); x.t=dirTimeCache.get(x.n); }
+      }catch(e){ x.t=0; }
+      tick();
+    });
+    for(let i=0;i<work.length;i+=16) await Promise.all(work.slice(i,i+16).map(f=>f()));
+    // mais recente primeiro; sem data → pela data do nome da pasta, depois alfabética
+    vis.sort((a,b)=>(b.t||0)-(a.t||0) || String(b.nameTs||'').localeCompare(String(a.nameTs||'')) || a.nome.localeCompare(b.nome));
     L.innerHTML='';
-    // REPORTs em PDF soltos na pasta: cada PDF = um exame (mais recente primeiro)
-    for(const x of pdfs){ try{ const f=pdfCache.get(x.n)||await x.h.getFile(); pdfCache.set(x.n,f); x.f=f; x.t=f.lastModified; }catch(e){ x.t=0; } }
-    pdfs.sort((a,b)=>b.t-a.t);
-    const pRows=pdfs.filter(x=>!q||x.n.toLowerCase().includes(q)).slice(0,300);
-    pRows.forEach(x=>{
-      const d=x.t?new Date(x.t):null;
-      const dt=d?d.toLocaleDateString('pt-BR')+' '+d.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'}):'';
+    vis.slice(0,300).forEach(x=>{
       const r=document.createElement('div'); r.className='pat-row';
-      r.innerHTML='<span class="pat-nm">📄 '+escapeHtml(x.n.replace(/\.pdf$/i,'').replace(/[\^_]+/g,' '))+'</span><span class="pat-dt">'+escapeHtml(dt)+'</span>';
+      r.innerHTML='<span class="pat-nm">'+(x.kind==='pdf'?'📄 ':'📁 ')+escapeHtml(x.nome)+'</span><span class="pat-dt">'+escapeHtml(fmtDT(x.t))+'</span>';
       r.title=x.n;
-      r.onclick=()=>importPdf(x.f);
+      r.onclick = x.kind==='pdf' ? ()=>importPdf(x.f) : ()=>importFolder(x.h,0);
       L.appendChild(r);
     });
     if(looseFiles){
@@ -4208,15 +4231,8 @@ const PACS=(function(){
       r.onclick=async()=>importHandles(await collect(pacsRoot,[],6));   // só o nível atual
       L.appendChild(r);
     }
-    rows.forEach(d=>{
-      const r=document.createElement('div'); r.className='pat-row';
-      r.innerHTML='<span class="pat-nm">'+escapeHtml(d.nome)+'</span><span class="pat-dt">'+escapeHtml(d.dt||d.n)+'</span>';
-      r.title=d.n;
-      r.onclick=()=>importFolder(d.h,0);
-      L.appendChild(r);
-    });
-    if(!rows.length && !looseFiles && !pRows.length) L.innerHTML='<div class="pacs-sum">Nenhum exame em <b>'+escapeHtml(pacsRoot.name)+'</b>'+(q?' para essa busca':' ainda')+'.<br>Finalize o exame no Affiniti para o REPORT chegar nesta pasta.</div>';
-    $('pacsFoot').textContent=pacsRoot.name+' · '+(pdfs.length?pdfs.length+' REPORT(s) PDF · ':'')+dirs.length+' pasta(s) — clique para importar';
+    if(!vis.length && !looseFiles) L.innerHTML='<div class="pacs-sum">Nenhum exame em <b>'+escapeHtml(pacsRoot.name)+'</b>'+(q?' para essa busca':' ainda')+'.<br>Finalize o exame no Affiniti para o REPORT chegar nesta pasta.</div>';
+    $('pacsFoot').textContent=pacsRoot.name+' · '+(nPdf?nPdf+' REPORT(s) PDF · ':'')+nDir+' pasta(s) — mais recentes primeiro';
   }
 
   async function readDs(file){
