@@ -4277,9 +4277,11 @@ const PACS=(function(){
       set(id,v,label,orig); el.dataset.pacsAuto='1'; el.dataset.userEdit='0';
     };
     if(p.nome) setId('pNome',p.nome.toUpperCase(),'Nome',st.pdf?'REPORT PDF':'Paciente DICOM');
+    // o campo Idade do laudo é numérico (só anos): < 1 ano não é preenchido e vira aviso no resumo
+    let idadeMesesAviso=null;
     if(p.idadeAnos!=null){
-      const ped=$('modelo')&&$('modelo').value==='pediatrico';
-      setId('pIdade', ped && p.idadeAnos<2 ? p.idadeMeses+'m' : p.idadeAnos, 'Idade', ped&&p.idadeAnos<2?'meses':'anos');
+      if(p.idadeAnos>=1) setId('pIdade', p.idadeAnos, 'Idade', 'anos');
+      else if(!idTyped('pIdade')) idadeMesesAviso=p.idadeMeses;
     }
     if(p.sexo) setId('sexo',p.sexo,'Sexo',sexoLbl(p.sexo));
     if(p.data) setId('pData',p.data,'Data do exame','');
@@ -4290,8 +4292,10 @@ const PACS=(function(){
     const units={len:'mm',vel:'cm/s',vol:'ml',pct:'%',pg:'mmHg'};
     PACS.RULES.forEach(r=>{
       const h=best[r[0]]; if(!h) return;
-      // arredondamento na unidade do laudo: mm/ml/% inteiros (7,17 cm → 72 mm = 7,2 cm); cm/s e GLS com 1 casa
-      const dec=(r[2]==='vel'||r[0]==='GLS')?1:0, k=Math.pow(10,dec);
+      // arredondamento na unidade do laudo: mm/ml/% inteiros (7,17 cm → 72 mm = 7,2 cm); cm/s e GLS com 1 casa.
+      // Pediátrico: mm com 1 casa (0,43 cm → 4,3 mm) — em estruturas pequenas 0,5 mm muda o Z-score.
+      const ped=$('modelo')&&$('modelo').value==='pediatrico';
+      const dec=(r[2]==='vel'||r[0]==='GLS'||(ped&&r[2]==='len'))?1:0, k=Math.pow(10,dec);
       const v=Math.round(h.v*k+1e-9)/k;
       set(r[0], v, r[1]+' ('+units[r[2]]+')', h.src.name+(h.src.unit?' ['+h.src.value+' '+h.src.unit+']':''));
     });
@@ -4321,6 +4325,10 @@ const PACS=(function(){
     else if(st.pdf && !nMed) h+='<div class="warn">⚠ Nenhuma medida reconhecida no PDF. Abra "Texto lido do PDF" abaixo e envie uma foto para ajuste.</div>';
     if(nStudies>1) h+='<div class="warn">A pasta tinha '+nStudies+' exames diferentes — importado o mais recente com medidas.</div>';
     if(!st.pdf && !st.nSR) h+='<div class="warn">⚠ Nenhum SR (Structured Report) de medidas nesse exame. No Affiniti 70, habilite o envio do SR no destino DICOM (Setup ▸ DICOM ▸ Store ▸ "Structured Reports"/SR) e reenvie o exame. Só os dados do paciente foram importados.</div>';
+    const pedMode=$('modelo')&&$('modelo').value==='pediatrico';
+    if(!pedMode && p.idadeAnos!=null && p.idadeAnos<18) h+='<div class="warn">⚠ Paciente com '+p.idadeAnos+' ano(s) e o laudo está no modo <b>Adulto</b>. Se for exame pediátrico, clique em <b>Pediátrico</b> e importe de novo (diâmetros com 1 casa decimal para os Z-scores).</div>';
+    if(pedMode) h+='<div class="hint">Modo pediátrico: diâmetros importados com 1 casa decimal (mm).</div>';
+    if(idadeMesesAviso!=null) h+='<div class="warn">⚠ Idade: '+idadeMesesAviso+' '+(idadeMesesAviso===1?'mês':'meses')+' — o campo Idade aceita só anos; preencha manualmente.</div>';
     if(kept.length){
       h+='<h4>Identificação mantida (digitada no laudo)</h4><div class="warn">⚠ O aparelho informou dados diferentes — confira:</div><table><tr><td class="o">Campo</td><td class="o">No laudo (mantido)</td><td class="o">No aparelho</td></tr>';
       kept.forEach(k=>{ h+='<tr><td>'+escapeHtml(k[0])+'</td><td class="v">'+escapeHtml(k[1])+'</td><td class="o">'+escapeHtml(k[2])+'</td></tr>'; });
