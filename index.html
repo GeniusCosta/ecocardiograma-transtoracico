@@ -30,6 +30,7 @@
   body.mode-ped .modo-btn.active{background:#7a3a8c}  /* roxo para distinguir modo pediátrico */
   body.mode-ped #blkDiast{display:none}
   body.mode-ped #fldSexo{display:none}
+  #sexo:invalid{border-color:var(--warn);color:var(--warn)}   /* sexo ainda não escolhido */
   /* blocos pediátricos: ocultos em adulto, visíveis em pediátrico */
   .ped-only{display:none}
   body.mode-ped .ped-only{display:block}
@@ -294,11 +295,11 @@
       <div class="row2">
         <div class="fld lg"><label>Nome</label><input id="pNome" placeholder="Nome do paciente"></div>
         <div class="fld sm"><label>Idade</label><input id="pIdade" type="number"></div>
-        <div class="fld sm" id="fldSexo"><label>Sexo</label><select id="sexo"><option value="F">Feminino</option><option value="M">Masculino</option></select></div>
+        <div class="fld sm" id="fldSexo"><label>Sexo</label><select id="sexo" required><option value="" selected>— selecione —</option><option value="M">MASCULINO</option><option value="F">FEMININO</option></select></div>
       </div>
       <div class="row2">
         <div class="fld md"><label>Data do exame</label><input id="pData" type="date"></div>
-        <div class="fld md"><label>Convênio</label><input id="pConv" value="SUS" placeholder="Ex.: PARTICULAR"></div>
+        <div class="fld md"><label>Convênio</label><input id="pConv" value="PARTICULAR" placeholder="Ex.: SUS"></div>
         <div class="fld lg"><label>Médico</label><input id="pMed" value="DR. GENIUS COSTA"></div>
       </div>
       <div class="row2">
@@ -1035,7 +1036,7 @@ function gradeFE(v,t){ if(v==null)return null; if(v>=t[0])return null; if(v>=t[2
 
 /* auto-frases alinhadas ao banco de frases oficial (YAML do Dr. Genius) */
 function grade(){
-  const m=MEAS, sx=m.sexo, T=GRAD[sx];
+  const m=MEAS, sx=m.sexo, T=GRAD[sx]||GRAD.F;   // sexo em branco → referências femininas até ser escolhido
   const auto={desc:{}, concl:{}};
   const isPedM = ($('modelo')?$('modelo').value:'adulto')==='pediatrico';
 
@@ -3257,11 +3258,11 @@ function novoLaudo(){
   document.querySelectorAll('.editor input').forEach(i=>{if(i.id!=='pMed'&&i.id!=='modelo')i.value='';});
   document.querySelectorAll('.editor textarea').forEach(t=>{t.value='';});
   document.querySelectorAll('.editor select').forEach(s=>{
-    if(s.id==='modelo'||s.id==='sexo')return;   // preservam a escolha corrente do usuário
+    if(s.id==='modelo')return;   // preserva o modo; o sexo volta para "— selecione —" (em branco)
     s.selectedIndex=0;
   });
   if($('disfCausa'))$('disfCausa').value='';
-  if($('pConv'))$('pConv').value='SUS';
+  if($('pConv'))$('pConv').value='PARTICULAR';
   if($('teeSedacao'))$('teeSedacao').value='Sedação consciente';
   if($('teeRitmo'))$('teeRitmo').value='Sinusal';
   if($('teeIndicacaoSel'))$('teeIndicacaoSel').value='';
@@ -4259,16 +4260,31 @@ const PACS=(function(){
     const {best,unmapped}=PACS.map(st.meas);
     const filled=[];
     const set=(id,v,label,orig)=>{ const el=$(id); if(!el||v==null||v==='') return; el.value=v; el.classList.add('pacs-fill'); filled.push([label,v,orig]); };
-    // identificação
-    if(p.nome) set('pNome',p.nome.toUpperCase(),'Nome',st.pdf?'REPORT PDF':'Paciente DICOM');
+    // identificação: o que foi DIGITADO no laudo prevalece; o aparelho só preenche o que está vazio
+    const T={}; ID_FIELDS.forEach(id=>T[id]=idTyped(id));      // avaliado antes de qualquer preenchimento
+    const kept=[];
+    const sexoLbl=v=>v==='M'?'Masculino':v==='F'?'Feminino':v;
+    const setId=(id,v,label,orig)=>{
+      if(v==null||v==='') return;
+      const el=$(id); if(!el) return;
+      if(T[id]){
+        const a=String(el.value).trim(), b=String(v).trim();
+        const igual = id==='pNome' ? a.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase()===b.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase()
+                    : ['pIdade','peso','altura'].includes(id) ? parseFloat(a.replace(',','.'))===parseFloat(b.replace(',','.')) : a.toUpperCase()===b.toUpperCase();
+        if(!igual) kept.push(id==='sexo'?[label,sexoLbl(a),sexoLbl(b)]:id==='pData'?[label,a.split('-').reverse().join('/'),b.split('-').reverse().join('/')]:[label,a,b]);
+        return;
+      }
+      set(id,v,label,orig); el.dataset.pacsAuto='1'; el.dataset.userEdit='0';
+    };
+    if(p.nome) setId('pNome',p.nome.toUpperCase(),'Nome',st.pdf?'REPORT PDF':'Paciente DICOM');
     if(p.idadeAnos!=null){
       const ped=$('modelo')&&$('modelo').value==='pediatrico';
-      set('pIdade', ped && p.idadeAnos<2 ? p.idadeMeses+'m' : p.idadeAnos, 'Idade', ped&&p.idadeAnos<2?'meses':'anos');
+      setId('pIdade', ped && p.idadeAnos<2 ? p.idadeMeses+'m' : p.idadeAnos, 'Idade', ped&&p.idadeAnos<2?'meses':'anos');
     }
-    if(p.sexo) set('sexo',p.sexo,'Sexo',p.sexo==='M'?'Masculino':'Feminino');
-    if(p.data) set('pData',p.data,'Data do exame','');
-    if(p.peso) set('peso',Math.round(p.peso*10)/10,'Peso (kg)','');
-    if(p.altura) set('altura',Math.round(p.altura),'Altura (cm)','');
+    if(p.sexo) setId('sexo',p.sexo,'Sexo',sexoLbl(p.sexo));
+    if(p.data) setId('pData',p.data,'Data do exame','');
+    if(p.peso) setId('peso',Math.round(p.peso*10)/10,'Peso (kg)','');
+    if(p.altura) setId('altura',Math.round(p.altura),'Altura (cm)','');
     ['ref_vt_psap','ref_vt_pad'].forEach(id=>{ const el=$(id); if(el && el.dataset.pacsAuto==='1'){ el.value=''; el.dataset.pacsAuto='0'; } });
     // medidas
     const units={len:'mm',vel:'cm/s',vol:'ml',pct:'%',pg:'mmHg'};
@@ -4305,6 +4321,11 @@ const PACS=(function(){
     else if(st.pdf && !nMed) h+='<div class="warn">⚠ Nenhuma medida reconhecida no PDF. Abra "Texto lido do PDF" abaixo e envie uma foto para ajuste.</div>';
     if(nStudies>1) h+='<div class="warn">A pasta tinha '+nStudies+' exames diferentes — importado o mais recente com medidas.</div>';
     if(!st.pdf && !st.nSR) h+='<div class="warn">⚠ Nenhum SR (Structured Report) de medidas nesse exame. No Affiniti 70, habilite o envio do SR no destino DICOM (Setup ▸ DICOM ▸ Store ▸ "Structured Reports"/SR) e reenvie o exame. Só os dados do paciente foram importados.</div>';
+    if(kept.length){
+      h+='<h4>Identificação mantida (digitada no laudo)</h4><div class="warn">⚠ O aparelho informou dados diferentes — confira:</div><table><tr><td class="o">Campo</td><td class="o">No laudo (mantido)</td><td class="o">No aparelho</td></tr>';
+      kept.forEach(k=>{ h+='<tr><td>'+escapeHtml(k[0])+'</td><td class="v">'+escapeHtml(k[1])+'</td><td class="o">'+escapeHtml(k[2])+'</td></tr>'; });
+      h+='</table>';
+    }
     if(pacsTR) h+='<div class="warn">IT importada: marque o <b>grau do refluxo tricúspide</b> (aba Descrição) e informe a <b>PAD</b> — a PSAP (gradiente + PAD) é preenchida automaticamente.</div>';
     h+='<h4>Preenchido automaticamente</h4><table>';
     filled.forEach(f=>{ h+='<tr><td>'+escapeHtml(f[0])+'</td><td class="v">'+escapeHtml(String(f[1]).replace('.',','))+'</td><td class="o">'+escapeHtml(f[2]||'')+'</td></tr>'; });
@@ -4322,6 +4343,22 @@ const PACS=(function(){
     $('pacsFoot').textContent=(p.nome||'Paciente')+(p.data?' · '+p.data.split('-').reverse().join('/'):'');
     toast('PACS: '+nMed+' medida(s) importada(s)'+(p.nome?' — '+p.nome:''));
   }
+
+  /* ---- Identificação: o que foi digitado no laudo prevalece sobre o aparelho ---- */
+  const ID_FIELDS=['pNome','pIdade','sexo','pData','peso','altura'];
+  const hojeISO=()=>new Date().toISOString().slice(0,10);   // mesmo padrão do init() do laudo
+  function idTyped(id){
+    const el=$(id); if(!el || el.dataset.pacsAuto==='1') return false;          // veio de importação anterior → pode trocar
+    if(id==='pData') return !!el.value && (el.dataset.userEdit==='1' || el.value!==hojeISO());   // data padrão (hoje) não conta
+    if(id==='sexo')  return el.value!=='';   // em branco por padrão: escolhido no laudo prevalece
+    return String(el.value).trim()!=='';
+  }
+  const markUser=e=>{ const el=e.target; if(el && ID_FIELDS.includes(el.id)){ el.dataset.pacsAuto='0'; el.dataset.userEdit='1'; } };
+  document.addEventListener('input',markUser); document.addEventListener('change',markUser);
+  // "Novo" (botão ou Ctrl+N): se o laudo foi limpo, zera as marcas de edição
+  const resetIdMarks=()=>setTimeout(()=>{ if(!$('pNome').value) ID_FIELDS.forEach(id=>{ const el=$(id); if(el){ el.dataset.userEdit='0'; el.dataset.pacsAuto='0'; } }); },0);
+  $('btnNovo').addEventListener('click',resetIdMarks);
+  document.addEventListener('keydown',e=>{ if((e.ctrlKey||e.metaKey) && e.key.toLowerCase()==='n') resetIdMarks(); });
 
   /* ---- IT → PSAP (painel "Refluxo tricúspide": #ref_vt_grau / #ref_vt_pad / #ref_vt_psap) ---- */
   function trApply(){
