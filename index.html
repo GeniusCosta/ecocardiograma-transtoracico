@@ -3824,7 +3824,7 @@ const PACS=(function(){
      A ordem importa: regras específicas primeiro. Cobre nomes padrão DICOM (TID 5200) e abreviações Philips. */
   const RULES=[
     ['SIVs','Septo IV sistólico','len',['18158-5'],/IVS\s*s\b|IVSs|septum.*(systol)|\bSIV\s*s\b|SIVs|septo.*sist/i,null,[2,45]],
-    ['SIV','Septo interventricular (SIV)','len',['18154-4'],/\bIVS\s*d?\b|IVSd|interventricular septum|septal (wall )?thickness|\bSIV\s*d?\b|SIVd|septo interv/i,/systol|IVSs|IVS\s*s\b|SIVs|SIV\s*s\b|sist|vel|strain|e['’′]/i,[2,45]],
+    ['SIV','Septo interventricular (SIV)','len',['18154-4'],/\bIVS\s*d?\b|IVSd|interventricular septum|septal (wall )?thickness|\bSIV\s*d?\b|SIVd|septo interv/i,/systol|IVSs|IVS\s*s\b|SIVs|SIV\s*s\b|sist|vel|strain|e['’′`´ˋ‘ʹ]/i,[2,45]],
     ['PPVEs','Parede posterior sistólica','len',['18156-9'],/LVPW\s*s\b|LVPWs|posterior wall.*systol|PPVE\s*s\b|PPVEs|parede posterior.*sist/i,null,[2,45]],
     ['PP','Parede posterior (PP)','len',['18152-8'],/LVPW|posterior wall|\bPPVE\s*d?\b|PPVEd|\bPP\s*d\b|parede posterior/i,/systol|LVPWs|LVPW\s*s\b|PPVEs|PPVE\s*s\b|sist|vel|strain/i,[2,45]],
     ['DSVE','Diâmetro telessistólico (DSVE)','len',['29438-9'],/LVID\s*s\b|LVIDs|LVESD|internal (end )?systolic dimension|(LVID|internal dimension).*systol|\bDIVE\s*s\b|DIVEs|\bDSVE\b|di[aâ]metro (tele)?sist/i,/index|\/\s*BSA|vol/i,[8,90]],
@@ -3846,16 +3846,16 @@ const PACS=(function(){
     ['AoIsthmus','Istmo aórtico','len',[],/isthmus/i,null,[2,60]],
     ['AoArco','Arco aórtico','len',['18011-6'],/\bao(rtic)?\s*arch|\barch\b/i,/vel|grad/i,[6,60]],
     ['AoRaiz','Raiz da aorta','len',['18015-7'],/\bao(rtic)?\s*root|sinus(es)? of valsalva|\bao\s*sinus|\bAoD\b|\bAo\s*(diam|dimension)\b|raiz (da )?ao(rta)?/i,/index|\/\s*BSA|ratio|LA\s*\/|\/\s*LA/i,[8,85]],
-    ['Elat','E′ lateral','vel',[],/(e['’′]|e\s*prime|\bEa\b|\bEm\b|early diastolic tissue).*lat|lat.*(e['’′]|e\s*prime|\bEa\b|\bEm\b)/i,/E\s*\/\s*e|\/|ratio|a['’′]|s['’′]/i,[1,35]],
-    ['Esep','E′ septal','vel',[],/(e['’′]|e\s*prime|\bEa\b|\bEm\b|early diastolic tissue).*(sept|medial)|(sept|medial).*(e['’′]|e\s*prime|\bEa\b|\bEm\b)/i,/E\s*\/\s*e|\/|ratio|a['’′]|s['’′]/i,[1,35]],
-    ['MvAnn','Anel mitral','len',[],/\bMV\s*ann|mitral (valve )?ann(ulus|ular)/i,/vel|e['’′]|a['’′]|s['’′]|tissue|TDI|lat|sept|medial|MAPSE|excursion/i,[8,70]],
-    ['TvAnn','Anel tricúspide','len',[],/\bTV\s*ann|tricuspid (valve )?ann(ulus|ular)/i,/TAPSE|excursion|vel|s['’′]|plane|TDI/i,[6,70]],
+    ['Elat','E′ lateral','vel',[],/\blat\w*\.?\s*E\W{0,2}\s*vel|(e['’′`´ˋ‘ʹ]|e\s*prime|\bEa\b|\bEm\b|early diastolic tissue).*lat|lat.*(e['’′`´ˋ‘ʹ]|e\s*prime|\bEa\b|\bEm\b)/i,/E\s*\/\s*e|\/|ratio|a['’′`´ˋ‘ʹ]|s['’′`´ˋ‘ʹ]/i,[1,35]],
+    ['Esep','E′ septal','vel',[],/\b(sept|med)\w*\.?\s*E\W{0,2}\s*vel|(e['’′`´ˋ‘ʹ]|e\s*prime|\bEa\b|\bEm\b|early diastolic tissue).*(sept|medial)|(sept|medial).*(e['’′`´ˋ‘ʹ]|e\s*prime|\bEa\b|\bEm\b)/i,/E\s*\/\s*e|\/|ratio|a['’′`´ˋ‘ʹ]|s['’′`´ˋ‘ʹ]/i,[1,35]],
+    ['MvAnn','Anel mitral','len',[],/\bMV\s*ann|mitral (valve )?ann(ulus|ular)/i,/vel|e['’′`´ˋ‘ʹ]|a['’′`´ˋ‘ʹ]|s['’′`´ˋ‘ʹ]|tissue|TDI|lat|sept|medial|MAPSE|excursion/i,[8,70]],
+    ['TvAnn','Anel tricúspide','len',[],/\bTV\s*ann|tricuspid (valve )?ann(ulus|ular)/i,/TAPSE|excursion|vel|s['’′`´ˋ‘ʹ]|plane|TDI/i,[6,70]],
     ['PvAnn','Anel pulmonar','len',[],/\bPV\s*ann|pulmon(ic|ary)(\s*valve)?\s*ann/i,/vel|grad/i,[4,45]],
     ['RPA','Ramo pulmonar direito','len',[],/\bRPA\b|right pulmonary artery/i,/vel|grad/i,[2,40]],
     ['LPA','Ramo pulmonar esquerdo','len',[],/\bLPA\b|left pulmonary artery/i,/vel|grad/i,[2,40]],
     ['MPA','Tronco pulmonar','len',[],/\bMPA\b|main pulmonary|pulmonary (artery )?trunk|\bPA\s*(diam|trunk|main)/i,/press|vel|grad|RPA|LPA|accel|AT\b/i,[3,60]],
-    ['ondaE','Onda E mitral','vel',['18037-2'],/\bMV\s*E\s*(vel|peak|max|wave)?\b|mitral (valve )?e[- ]?(wave|point|peak|vel)|\bE\s*(vel|wave|peak)\b/i,/e['’′]|prime|tissue|TDI|annul|\/|ratio|\bDT\b|decel|time|VTI|lat|sept/i,[10,300]],
-    ['ondaA','Onda A mitral','vel',['17978-7'],/\bMV\s*A\s*(vel|peak|max|wave)?\b|mitral (valve )?a[- ]?(wave|peak|vel)|\bA\s*(vel|wave|peak)\b/i,/a['’′]|prime|tissue|TDI|annul|\/|ratio|dur|VTI|\bAo\b|aort|lat|sept/i,[10,300]]
+    ['ondaE','Onda E mitral','vel',['18037-2'],/\bMV\s*peak\s*E\b|\bpeak\s*E\s*vel|\bMV\s*E\s*(vel|peak|max|wave)?\b|mitral (valve )?e[- ]?(wave|point|peak|vel)|\bE\s*(vel|wave|peak)\b/i,/e['’′`´ˋ‘ʹ]|prime|tissue|TDI|annul|\/|ratio|\bDT\b|decel|time|VTI|lat|sept/i,[10,300]],
+    ['ondaA','Onda A mitral','vel',['17978-7'],/\bMV\s*peak\s*A\b|\bpeak\s*A\s*vel|\bMV\s*A\s*(vel|peak|max|wave)?\b|mitral (valve )?a[- ]?(wave|peak|vel)|\bA\s*(vel|wave|peak)\b/i,/a['’′`´ˋ‘ʹ]|prime|tissue|TDI|annul|\/|ratio|dur|VTI|\bAo\b|aort|lat|sept/i,[10,300]]
   ];
 
   const UNITS={
@@ -3960,7 +3960,16 @@ const PACS=(function(){
   function pdfPatient(txt){
     const g=re=>{ const m=txt.match(re); return m?m[1].trim():null; };
     const SEP='[ \\t]*[:：]?[ \\t]*';
-    let nome=g(new RegExp('(?:Nome(?: do paciente)?|Patient(?: Name)?|Paciente|Name)'+SEP+'([^\\n\\t:]{3,70}?)(?=\\s{2,}|\\t|\\n|$|\\s+(?:ID|Sexo|Sex|Gender|Data|Date|DOB|Idade|Age|Nasc\\w*|Birth)\\b)','i'));
+    // títulos que NÃO são nome ("Patient Demographics", "Patient Information"…)
+    const BAD=/^(demographics?|information|info|data|details?|dados|identifica\w*|id|name|nome|report|relat\w*)\b/i;
+    let nome=null;
+    const lastN=g(/Last\s*Name[ \t]*[:：]?[ \t]*([^\n\t:]{2,40}?)(?=\s{2,}|\t|\n|$|\s+(?:First|Middle|ID)\b)/i);
+    const firstN=g(/First\s*Name[ \t]*[:：]?[ \t]*([^\n\t:]{2,40}?)(?=\s{2,}|\t|\n|$|\s+(?:Last|Middle|ID)\b)/i);
+    if(lastN||firstN) nome=[firstN,lastN].filter(v=>v&&!BAD.test(v)).join(' ');
+    if(!nome){
+      const re=new RegExp('(?:Nome(?: do paciente)?|Patient(?: Name)?|Paciente|Name)'+SEP+'([^\\n\\t:]{3,70}?)(?=\\s{2,}|\\t|\\n|$|\\s+(?:ID|Sexo|Sex|Gender|Data|Date|DOB|Idade|Age|Nasc\\w*|Birth)\\b)','gi');
+      let m; while((m=re.exec(txt))){ const v=m[1].trim(); if(v && !BAD.test(v) && /[A-Za-zÀ-ú]{2}/.test(v)){ nome=v; break; } }
+    }
     if(nome){ nome=nome.replace(/\^/g,' , ').replace(/\s+/g,' ').trim(); if(/,/.test(nome)){ const p=nome.split(',').map(x=>x.trim()).filter(Boolean); nome=p.slice(1).concat(p[0]).join(' '); } }
     const ymd=s=>{ if(!s) return null; const m=s.match(/(\d{1,4})[\/.-](\d{1,2})[\/.-](\d{2,4})/); if(!m) return null;
       if(m[1].length===4) return [+m[1],+m[2],+m[3]];
@@ -3984,12 +3993,15 @@ const PACS=(function(){
       data: iso(dt), peso: peso>0?peso:null, altura: altura>0?altura:null
     };
   }
+  const GENERIC=/^(vel|velocity|pg|peak|mean|max|vmax|vti|value|valor|avg|m[eé]dia)$/i;
   function parsePdf(lines){
     const meas=[]; let ctx='';
     for(const ln of lines){
-      const ms=lineMeas(ln);
+      const first=ln.trim().split(/\s+/)[0]||'';
+      const ms=lineMeas(ctx && /^[-−]?\d/.test(first) ? ctx+' '+ln : ln);   // linha começa pelo valor → nome está na linha anterior
       if(!ms.length){ const t=ln.trim(); if(t && t.length<=40 && !/\d/.test(t) && !/:/.test(t)) ctx=t; continue; }
       ms.forEach(m=>{ if(PAT_RE.test(m.name)) return;
+        if(ctx && m.name.split(/\s+/).every(w=>GENERIC.test(w))) m.name=ctx+' '+m.name;   // "Vel" → "MV Peak E Vel Vel"
         meas.push({name:m.name,code:'',scheme:'PDF',value:m.value,unit:m.unit.replace('²','2'),unitM:m.unit,mods:[],ctx:ctx?[ctx]:[]}); });
     }
     return {meas,p:pdfPatient(lines.join('\n'))};
@@ -4243,7 +4255,9 @@ const PACS=(function(){
     const units={len:'mm',vel:'cm/s',vol:'ml',pct:'%'};
     PACS.RULES.forEach(r=>{
       const h=best[r[0]]; if(!h) return;
-      const v=Math.round(h.v*10)/10;
+      // arredondamento na unidade do laudo: mm/ml/% inteiros (7,17 cm → 72 mm = 7,2 cm); cm/s e GLS com 1 casa
+      const dec=(r[2]==='vel'||r[0]==='GLS')?1:0, k=Math.pow(10,dec);
+      const v=Math.round(h.v*k+1e-9)/k;
       set(r[0], v, r[1]+' ('+units[r[2]]+')', h.src.name+(h.src.unit?' ['+h.src.value+' '+h.src.unit+']':''));
     });
     compute();
