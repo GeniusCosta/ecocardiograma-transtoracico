@@ -4464,6 +4464,7 @@ const PACS=(function(){
   body.mode-tee #a4p2 .desc p, body.mode-tee #a4p2 .concl p{line-height:var(--conclLh,1.3)}
   /* folhas de continuação: a regra .a4:nth-of-type(n+3){display:none} escondia a 3ª folha na impressão */
   @media print{ #pages .a4.a4-cont{display:block!important} }
+  #pages .a4 .cont-note{font-size:9pt;font-style:italic;text-align:right;color:#444;margin-top:6px}
 </style>
 <script>
 (function(){
@@ -4481,7 +4482,7 @@ const PACS=(function(){
   // ponto mais baixo do que precisa caber: descrição, conclusão, assinatura e data
   function fundo(page){
     let b=0;
-    page.querySelectorAll('.desc, .concl, .sig-block, .foot').forEach(el=>{ if(visivel(el)) b=Math.max(b,bottomIn(el,page)); });
+    page.querySelectorAll('.desc, .concl, .cont-note, .sig-block, .foot').forEach(el=>{ if(visivel(el)) b=Math.max(b,bottomIn(el,page)); });
     return b;
   }
   const cabe=page=>fundo(page)<=limite(page);
@@ -4521,6 +4522,7 @@ const PACS=(function(){
       }
       if(pag.anchor && pag.anchor.parentNode) pag.anchor.remove();
       if(pag.label) pag.label.style.display='';
+      if(pag.nota) pag.nota.remove();
       pag=null;
     }
     document.querySelectorAll('#pages .a4.a4-cont').forEach(p=>p.remove());
@@ -4534,18 +4536,19 @@ const PACS=(function(){
   }
 
   // folha de continuação: mesmo papel timbrado, título e identificação
+  const avisoContinua=()=>{ const d=document.createElement('div'); d.className='cont-note'; d.textContent='continua na próxima página'; return d; };
   function novaFolha(p2, depoisDe, rotulo){
     const n=document.querySelectorAll('#pages .a4.a4-cont').length+3;
     const pg=document.createElement('div'); pg.className='a4 a4-cont'; pg.id='a4p'+n;
     const bg=p2.querySelector('img.bg'); if(bg) pg.appendChild(bg.cloneNode(true));
     const c=document.createElement('div'); c.className='content'; pg.appendChild(c);
     const tit=p2.querySelector('.doc-title'); if(tit){ const t=tit.cloneNode(true); t.removeAttribute('id'); c.appendChild(t); }
-    const idt=p2.querySelector('.idtab'); if(idt){ const t=idt.cloneNode(true); t.querySelectorAll('[id]').forEach(x=>x.removeAttribute('id')); c.appendChild(t); }
-    const lab=document.createElement('div'); lab.className='sec-label center'; lab.textContent=rotulo; c.appendChild(lab);
+    if(rotulo){ const lab=document.createElement('div'); lab.className='sec-label center'; lab.textContent=rotulo; c.appendChild(lab); }   // só quando nenhuma linha ficou na folha 2
     const concl=document.createElement('div'); concl.className='concl'; c.appendChild(concl);
+    const nota=avisoContinua(); c.appendChild(nota);
     const bf=p2.querySelector('.brandfoot'); if(bf) pg.appendChild(bf.cloneNode(true));
     depoisDe.after(pg);
-    return {pg, c, concl};
+    return {pg, c, concl, nota};
   }
 
   function paginar(p2,ete){
@@ -4554,8 +4557,9 @@ const PACS=(function(){
     sig.remove();                               // a assinatura vai para a última folha
     if(f2) f2.style.visibility='hidden';        // a data acompanha a assinatura
     aplicar(p2,null);
-    pag={anchor:document.createComment('pag-v.sig-67'), moved:[], label:null};
+    pag={anchor:document.createComment('pag-v.sig-67'), moved:[], label:null, nota:avisoContinua()};
     concl.appendChild(pag.anchor);
+    concl.after(pag.nota);
     // blocos: parágrafos (ou o editor manual inteiro, que não pode ser dividido)
     const blocos = concl.querySelector('textarea') ? [concl.firstElementChild] : [...concl.querySelectorAll('p')];
     // 1) folha 2: tira blocos do fim até caber
@@ -4573,23 +4577,26 @@ const PACS=(function(){
     if(!cabe(p2)) console.warn('[laudo v.sig-67] a descrição excede a folha 2 mesmo sem a conclusão');
 
     // 2) folhas de continuação (fonte normal), enchidas em ordem
-    let rot = blocos.length ? 'CONCLUSÕES (continuação)' : 'CONCLUSÕES';
+    const rot = blocos.length ? null : 'CONCLUSÕES';
     let f=novaFolha(p2, p2, rot);
     while(resto.length){
       const b=resto.shift();
       f.concl.appendChild(b);
       if(!cabe(f.pg) && f.concl.children.length>1){   // não coube: começa nova folha
         b.remove();
-        f=novaFolha(p2, f.pg, 'CONCLUSÕES (continuação)');
+        f=novaFolha(p2, f.pg, null);
         f.concl.appendChild(b);
       }
     }
     // 3) assinatura + data na última folha
     const foot=document.createElement('div'); foot.className='foot'; foot.textContent=dataTxt;
+    f.nota.remove();
     f.c.appendChild(sig); f.c.appendChild(foot);
     if(!cabe(f.pg) && !encolher(f.pg,false)){
+      f.c.insertBefore(f.nota, sig);           // esta folha continua na próxima
       // nem com a fonte mínima: as últimas linhas descem para uma nova folha junto com a assinatura
-      const ult=novaFolha(p2, f.pg, 'CONCLUSÕES (continuação)');
+      const ult=novaFolha(p2, f.pg, null);
+      ult.nota.remove();
       ult.c.appendChild(sig); ult.c.appendChild(foot);
       while(!cabe(f.pg) && f.concl.children.length>1) ult.concl.insertBefore(f.concl.lastElementChild, ult.concl.firstChild);
       if(!cabe(ult.pg)) encolher(ult.pg,false);
