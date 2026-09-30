@@ -2704,6 +2704,18 @@ function renderPreview(){
     const bsaTxt = MEAS.sc!=null ? fmt(MEAS.sc,2)+' m² (Haycock)' : '—';
     rows += `<tr><td class="g-h" colspan="3" style="background:#3d2466;color:#e0d0ff">EXAME PEDIÁTRICO · BSA: ${bsaTxt}</td></tr>`;
   }
+  // v.antro-68: dados antropométricos no início da tabela (peso, altura, superfície corpórea, IMC)
+  {
+    const pesoV=MEAS.peso, altV=MEAS.alt, scV=MEAS.sc;
+    const imc=(pesoV && altV) ? pesoV/Math.pow(altV/100,2) : null;
+    const cel=(v,d,un)=>(v!=null && !isNaN(v)) ? fmt(v,d)+' '+un : '';
+    const linha=(lbl,val,ref)=>`<tr><td class="lbl">${lbl}</td><td class="v">${val}</td><td class="r">${ref}</td></tr>`;
+    rows+='<tr><td class="g-h" colspan="3">DADOS ANTROPOMÉTRICOS</td></tr>';
+    rows+=linha('Peso', cel(pesoV, pesoV!=null && pesoV%1 ? 1 : 0, 'kg'), '');
+    rows+=linha('Altura', cel(altV, 0, 'cm'), '');
+    rows+=linha('Superfície corpórea ('+(isPed?'Haycock':'DuBois')+')', cel(scV, 2, 'm²'), '');
+    rows+=linha('Índice de massa corporal (IMC)', cel(imc, 1, 'kg/m²'), isPed ? '' : '18,5–24,9');
+  }
   const ROWS = isTee ? TEE_MROWS : (isPed ? PED_MROWS : MROWS);
   ROWS.forEach(r=>{
     if(r[0]==='g'){
@@ -4453,15 +4465,23 @@ const PACS=(function(){
          assinatura juntos), com piso de 65%; além disso o conteúdo passava do fim da folha e o
          overflow:hidden da impressão cortava a assinatura (impressão/PDF não permitiam 3ª folha);
        • fitTeePage (ETE) reduzia a fonte por cima do scale já aplicado.
-     Nova regra: assinatura + data formam uma ÁREA PROTEGIDA que sempre termina acima do rodapé
-     institucional. Só a conclusão (no ETE: descrição + conclusão) encolhe — fonte e entrelinha —
-     até um mínimo legível; se ainda não couber, a conclusão continua em folhas seguintes (fonte
-     normal) e a assinatura vai na última. Medidas em unidades de layout (offsetTop/offsetHeight):
-     independem do zoom da tela e valem igual para tela, impressão e PDF. -->
+     Regra: assinatura + data formam uma ÁREA PROTEGIDA que sempre termina acima do rodapé
+     institucional. v.sig-69: para caber em duas folhas, descrição e conclusão encolhem JUNTAS (mesma
+     fonte, entrelinha e espaçamento) e a assinatura encolhe proporcionalmente (até 80%); só abaixo do
+     mínimo legível a conclusão continua na folha seguinte — que sempre leva linhas da conclusão, nunca
+     só a assinatura. Medidas em unidades de layout (offsetTop/offsetHeight): independem do zoom da
+     tela e valem igual para tela, impressão e PDF. -->
 <style>
-  #pages .a4 .concl p{font-size:var(--conclFs,10.5pt);line-height:var(--conclLh,1.4)}
-  #pages .a4 .concl .concl-edit{font-size:var(--conclFs,10.5pt);line-height:var(--conclLh,1.4)}
-  body.mode-tee #a4p2 .desc p, body.mode-tee #a4p2 .concl p{line-height:var(--conclLh,1.3)}
+  /* os valores padrão das variáveis são os tamanhos originais do laudo */
+  #pages .a4 .desc p{font-size:var(--txtFs,10.5pt);line-height:var(--txtLh,1.4);margin-bottom:var(--gapD,5px)}
+  #pages .a4 .concl p{font-size:var(--txtFs,10.5pt);line-height:var(--txtLh,1.4);margin-bottom:var(--gapC,4px)}
+  #pages .a4 .desc .desc-edit, #pages .a4 .concl .concl-edit{font-size:var(--txtFs,10.5pt);line-height:var(--txtLh,1.4)}
+  body.mode-tee #a4p2 .desc p, body.mode-tee #a4p2 .concl p{line-height:var(--txtLh,1.3)}
+  #pages .a4 .sig-block{margin-top:calc(14px * var(--sigK,1))}
+  #pages .a4 .sig-block .rub{height:calc(95px * var(--sigK,1));margin-bottom:calc(-42px * var(--sigK,1))}
+  #pages .a4 .sig-block .sig-line{width:calc(280px * var(--sigK,1))}
+  #pages .a4 .sig-block .sig-name{font-size:calc(10pt * var(--sigK,1));margin-top:calc(5px * var(--sigK,1))}
+  #pages .a4 .sig-block .sig-qual{font-size:calc(8.5pt * var(--sigK,1))}
   /* folhas de continuação: a regra .a4:nth-of-type(n+3){display:none} escondia a 3ª folha na impressão */
   @media print{ #pages .a4.a4-cont{display:block!important} }
   #pages .a4 .cont-note{font-size:9pt;font-style:italic;text-align:right;color:#444;margin-top:6px}
@@ -4470,6 +4490,8 @@ const PACS=(function(){
 (function(){
   const SAFE_PX=15;                               // ~4 mm de folga acima do rodapé institucional
   const FS_MAX=10.5, FS_MIN=8, FS_MIN_ETE=7, FS_STEP=0.25, LHS=[1.4,1.3,1.2];
+  const SIG_MIN=0.8;                              // assinatura encolhe até 80%
+  const MIN_LINHAS=2;                             // a folha seguinte sempre leva ao menos 2 linhas da conclusão
 
   const topIn=(el,page)=>{ let y=0; for(let n=el; n && n!==page; n=n.offsetParent) y+=n.offsetTop; return y; };
   const bottomIn=(el,page)=>topIn(el,page)+el.offsetHeight;
@@ -4479,30 +4501,37 @@ const PACS=(function(){
     const bf=page.querySelector('.brandfoot');
     return (visivel(bf) ? topIn(bf,page) : page.clientHeight-45) - SAFE_PX;
   }
-  // ponto mais baixo do que precisa caber: descrição, conclusão, assinatura e data
+  // ponto mais baixo do que precisa caber: descrição, conclusão, aviso, assinatura e data
   function fundo(page){
     let b=0;
     page.querySelectorAll('.desc, .concl, .cont-note, .sig-block, .foot').forEach(el=>{ if(visivel(el)) b=Math.max(b,bottomIn(el,page)); });
     return b;
   }
   const cabe=page=>fundo(page)<=limite(page);
-  const ajustaTA=root=>root.querySelectorAll('textarea.concl-edit').forEach(ta=>{ ta.style.height='auto'; ta.style.height=(ta.scrollHeight+4)+'px'; });
+  const ajustaTA=root=>root.querySelectorAll('textarea.concl-edit, textarea.desc-edit').forEach(ta=>{ ta.style.height='auto'; ta.style.height=(ta.scrollHeight+4)+'px'; });
 
-  function aplicar(page,fs,lh,ete){
-    ['--conclFs','--conclLh','--teeFs'].forEach(v=>page.style.removeProperty(v));
+  const VARS=['--txtFs','--txtLh','--gapD','--gapC','--sigK','--teeFs','--conclFs','--conclLh'];
+  // aplica um nível de redução à folha inteira: texto (descrição + conclusão), espaçamentos e assinatura
+  function aplicar(page,fs,lh){
+    VARS.forEach(v=>page.style.removeProperty(v));
     if(fs!=null){
-      page.style.setProperty(ete && page.id==='a4p2' ? '--teeFs' : '--conclFs', fs+'pt');
-      page.style.setProperty('--conclLh', String(lh));
+      const k=fs/FS_MAX;
+      page.style.setProperty('--txtFs', fs+'pt');
+      page.style.setProperty('--teeFs', fs+'pt');            // ETE usa a mesma variável de fonte
+      page.style.setProperty('--txtLh', String(lh));
+      page.style.setProperty('--gapD', (5*k).toFixed(2)+'px');
+      page.style.setProperty('--gapC', (4*k).toFixed(2)+'px');
+      page.style.setProperty('--sigK', Math.max(SIG_MIN,k).toFixed(3));
     }
     ajustaTA(page);
   }
-  // reduz fonte e entrelinha até caber; prefere a maior fonte possível (entrelinha menor antes da fonte)
+  // procura a MAIOR fonte que cabe (entrelinha menor antes de fonte menor)
   function encolher(page,ete){
     const min=ete && page.id==='a4p2' ? FS_MIN_ETE : FS_MIN;
     for(let fs=FS_MAX; fs>=min-1e-6; fs=Math.round((fs-FS_STEP)*100)/100){
       for(const lh of LHS){
         if(fs===FS_MAX && lh===LHS[0]) continue;
-        aplicar(page,fs,lh,ete);
+        aplicar(page,fs,lh);
         if(cabe(page)) return true;
       }
     }
@@ -4510,7 +4539,7 @@ const PACS=(function(){
     return false;
   }
 
-  let pag=null;   // estado da paginação: {anchor, moved:[{el,parent,next}], label}
+  let pag=null;   // estado da paginação: {anchor, moved:[{el,parent,next}], label, nota}
   function restaurar(){
     const p2=$('a4p2'), concl=$('oConcl'), f2=$('oFoot2');
     const sig=document.querySelector('.sig-block');
@@ -4535,8 +4564,8 @@ const PACS=(function(){
     if(p2) aplicar(p2,null);
   }
 
-  // folha de continuação: mesmo papel timbrado, título e identificação
   const avisoContinua=()=>{ const d=document.createElement('div'); d.className='cont-note'; d.textContent='continua na próxima página'; return d; };
+  // folha de continuação: papel timbrado e título do exame (sem identificação nem rótulo)
   function novaFolha(p2, depoisDe, rotulo){
     const n=document.querySelectorAll('#pages .a4.a4-cont').length+3;
     const pg=document.createElement('div'); pg.className='a4 a4-cont'; pg.id='a4p'+n;
@@ -4556,19 +4585,16 @@ const PACS=(function(){
     const dataTxt=f2?f2.textContent:'';
     sig.remove();                               // a assinatura vai para a última folha
     if(f2) f2.style.visibility='hidden';        // a data acompanha a assinatura
-    aplicar(p2,null);
+    aplicar(p2,null);                           // com a folha extra, volta ao tamanho normal
     pag={anchor:document.createComment('pag-v.sig-67'), moved:[], label:null, nota:avisoContinua()};
     concl.appendChild(pag.anchor);
     concl.after(pag.nota);
     // blocos: parágrafos (ou o editor manual inteiro, que não pode ser dividido)
     const blocos = concl.querySelector('textarea') ? [concl.firstElementChild] : [...concl.querySelectorAll('p')];
-    // 1) folha 2: tira blocos do fim até caber
+    const move=b=>{ pag.moved.push({el:b, parent:b.parentNode, next:b.nextSibling}); b.remove(); return b; };
+    // 1) folha 2: tira blocos do fim até caber — e sempre leva ao menos MIN_LINHAS para a folha seguinte
     const resto=[];
-    while(!cabe(p2) && blocos.length){
-      const b=blocos.pop();
-      pag.moved.push({el:b, parent:b.parentNode, next:b.nextSibling});
-      resto.unshift(b); b.remove();
-    }
+    while(blocos.length && (!cabe(p2) || resto.length<MIN_LINHAS)) resto.unshift(move(blocos.pop()));
     if(!blocos.length){                        // nenhuma linha ficou na folha 2: o título vai junto
       const l2=concl.previousElementSibling;
       if(l2 && l2.classList.contains('sec-label')){ l2.style.display='none'; pag.label=l2; }
@@ -4577,28 +4603,33 @@ const PACS=(function(){
     if(!cabe(p2)) console.warn('[laudo v.sig-67] a descrição excede a folha 2 mesmo sem a conclusão');
 
     // 2) folhas de continuação (fonte normal), enchidas em ordem
-    const rot = blocos.length ? null : 'CONCLUSÕES';
-    let f=novaFolha(p2, p2, rot);
+    const folhas=[];
+    let f=novaFolha(p2, p2, blocos.length ? null : 'CONCLUSÕES'); folhas.push(f);
     while(resto.length){
       const b=resto.shift();
       f.concl.appendChild(b);
       if(!cabe(f.pg) && f.concl.children.length>1){   // não coube: começa nova folha
         b.remove();
-        f=novaFolha(p2, f.pg, null);
+        f=novaFolha(p2, f.pg, null); folhas.push(f);
         f.concl.appendChild(b);
       }
     }
+    // a última folha nunca fica com menos de MIN_LINHAS: puxa da anterior
+    const ant=folhas[folhas.length-2];
+    while(ant && f.concl.children.length<MIN_LINHAS && ant.concl.children.length>MIN_LINHAS)
+      f.concl.insertBefore(ant.concl.lastElementChild, f.concl.firstChild);
     // 3) assinatura + data na última folha
     const foot=document.createElement('div'); foot.className='foot'; foot.textContent=dataTxt;
     f.nota.remove();
     f.c.appendChild(sig); f.c.appendChild(foot);
     if(!cabe(f.pg) && !encolher(f.pg,false)){
-      f.c.insertBefore(f.nota, sig);           // esta folha continua na próxima
-      // nem com a fonte mínima: as últimas linhas descem para uma nova folha junto com a assinatura
+      // nem reduzindo: as últimas linhas (ao menos MIN_LINHAS) descem para uma nova folha junto com a assinatura
+      f.c.insertBefore(f.nota, sig);
       const ult=novaFolha(p2, f.pg, null);
       ult.nota.remove();
       ult.c.appendChild(sig); ult.c.appendChild(foot);
-      while(!cabe(f.pg) && f.concl.children.length>1) ult.concl.insertBefore(f.concl.lastElementChild, ult.concl.firstChild);
+      let mov=0;
+      while(f.concl.children.length>1 && (!cabe(f.pg) || mov<MIN_LINHAS)){ ult.concl.insertBefore(f.concl.lastElementChild, ult.concl.firstChild); mov++; }
       if(!cabe(ult.pg)) encolher(ult.pg,false);
     }
   }
@@ -4610,8 +4641,8 @@ const PACS=(function(){
     const ete=document.body.classList.contains('mode-tee');
     ajustaTA(p2);
     if(cabe(p2)) return;                       // 1) cabe como está
-    if(encolher(p2,ete)) return;               // 2) encolhe só a conclusão (ETE: descrição + conclusão)
-    paginar(p2,ete);                           // 3) abaixo do mínimo legível: continua em folhas seguintes
+    if(encolher(p2,ete)) return;               // 2) descrição + conclusão + assinatura encolhem juntas
+    paginar(p2,ete);                           // 3) abaixo do mínimo legível: continua na folha seguinte
   }
 
   // substitui os ajustes antigos da folha 2 (chamados por nome em renderPreview/impressão/PDF)
