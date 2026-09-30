@@ -4483,7 +4483,13 @@ const PACS=(function(){
   #pages .a4 .sig-block .sig-name{font-size:calc(10pt * var(--sigK,1));margin-top:calc(5px * var(--sigK,1))}
   #pages .a4 .sig-block .sig-qual{font-size:calc(8.5pt * var(--sigK,1))}
   /* folhas de continuação: a regra .a4:nth-of-type(n+3){display:none} escondia a 3ª folha na impressão */
-  @media print{ #pages .a4.a4-cont{display:block!important} }
+  @media print{
+    #pages .a4.a4-cont{display:block!important}
+    /* a regra antiga .a4 .content{max-height:297mm;overflow:hidden} cortava a caixa do conteúdo ANTES da escala:
+       a data (presa ao fundo da caixa) subia sobre a tabela da folha 1 e o fim da tabela sumia.
+       O recorte fica só na folha (.a4{overflow:hidden}); a escala garante que tudo caiba. */
+    #pages .a4 .content{max-height:none!important;overflow:visible!important}
+  }
   #pages .a4 .cont-note{font-size:9pt;font-style:italic;text-align:right;color:#444;margin-top:6px}
 </style>
 <script>
@@ -4648,21 +4654,25 @@ const PACS=(function(){
   // substitui os ajustes antigos da folha 2 (chamados por nome em renderPreview/impressão/PDF)
   window.fitPage2=layoutPagina2;
   window.fitTeePage=function(){};
-  // folha 1 (medidas) mantém o auto-shrink por escala — não tem assinatura
+  // folha 1 (medidas): tabela densa, ajustada por escala proporcional — calculada pelo espaço REAL:
+  // tabela e data terminam acima do rodapé institucional (mesmo limite da folha 2)
   window.autoShrinkA4=function(){
     const page=$('a4p1'); if(!page) return;
     const content=page.querySelector('.content'); if(!content) return;
-    content.style.transform=''; content.style.width='';
+    content.style.transform=''; content.style.width=''; content.style.transformOrigin='';
     if(page.offsetParent===null) return;
-    const H=page.clientHeight; if(!H) return;
-    content.style.transformOrigin='top left';
-    let f=1.0, guard=0;
-    while(guard++<20){
-      if(content.scrollHeight*f<=H+1) break;
-      f=Math.max(0.65, Math.round((f-0.025)*1000)/1000);
+    const L=limite(page), topo=content.offsetTop;
+    // fundo do conteúdo em coordenadas do próprio conteúdo (sem escala)
+    const fundoConteudo=()=>{ let b=0; [...content.children].forEach(el=>{ if(el.offsetParent!==null) b=Math.max(b, el.offsetTop+el.offsetHeight); }); return b; };
+    let f=1;
+    for(let i=0;i<8;i++){                       // a largura muda com a escala (quebras de linha): repete até estabilizar
+      const alvo=Math.min(1, (L-topo)/fundoConteudo());
+      if(alvo>=f-0.001) break;
+      f=Math.max(0.6, Math.floor(alvo*1000)/1000);
+      content.style.transformOrigin='top left';
       content.style.transform='scale('+f+')';
       content.style.width=(100/f)+'%';
-      if(f<=0.65) break;
+      if(f<=0.6) break;
     }
   };
   // impressão/PDF: a rotina original só converte o editor manual que está em #oConcl (folha 2);
