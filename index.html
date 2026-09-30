@@ -3850,11 +3850,11 @@ const PACS=(function(){
     ['_RVESA','Área sistólica do VD','area',[],/\bRV\s*ESA\b|\bRVESA\b|\bRV\s*Area\s*s\b|\bRVAs\b|right ventric\w*.*(end[- ]?)?systolic area/i,/index|\/\s*BSA/i,[1,60]],
     ['AoAnn','Anel aórtico','len',['17996-9'],/\bAo(rtic)?\s*(valve\s*)?ann(ulus|ular)?\b|\bAV\s*ann/i,/vel|area|VTI|grad/i,[6,45]],
     ['AoStj','Junção sinotubular','len',['17995-1'],/sino-?tubular|\bST\s*junc|\bSTJ\b/i,/index|\/\s*BSA/i,[6,65]],
-    ['AoAsc','Aorta ascendente','len',['18012-4'],/\basc(ending)?\.?\s*ao|\bao(rta)?\s*asc|ascending aorta|aorta ascendente/i,/index|\/\s*BSA/i,[8,90]],
+    ['AoAsc','Aorta ascendente','len',['18012-4'],/\basc(ending)?\.?\s*ao|\bao(rta)?\s*asc|ascending aorta|aorta ascendente/i,/index|\/\s*BSA|desc/i,[8,90]],
     ['AoArchD','Arco transverso distal','len',[],/distal (transverse )?arch|arch\s*dist|transverse arch/i,null,[2,60]],
     ['AoIsthmus','Istmo aórtico','len',[],/isthmus/i,null,[2,60]],
     ['AoArco','Arco aórtico','len',['18011-6'],/\bao(rtic)?\s*arch|\barch\b/i,/vel|grad/i,[6,60]],
-    ['AoRaiz','Raiz da aorta','len',['18015-7'],/\bao(rtic)?\s*root|sinus(es)? of valsalva|\bao\s*sinus|\bAoD\b|\bAo\s*(diam|dimension)\b|raiz (da )?ao(rta)?/i,/index|\/\s*BSA|ratio|LA\s*\/|\/\s*LA/i,[8,85]],
+    ['AoRaiz','Raiz da aorta','len',['18015-7'],/\bao(rtic)?\s*root|sinus(es)? of valsalva|\bao\s*sinus|\bAoD\b|\bAoR\b|\bAo\s*(diam|dimension)\b|raiz (da )?ao(rta)?/i,/index|\/\s*BSA|ratio|LA\s*\/|\/\s*LA|desc|thorac|abdom/i,[8,85]],
     ['Sprime','Onda S′ tricúspide','vel',[],/(\bRV|\bTV|tric\w*)\W{0,3}(free wall\s*|lat\w*\s*|ann\w*\s*)?S\s*['’′`´ˋ‘ʹ]|\bS\s*['’′`´ˋ‘ʹ]\s*(vel\w*\s*)?\(?\s*(RV|TV|tric)|\bRV\s*S\s*(vel|wave|peak)|\bRV\s*Sm\b|tricuspid annul\w*.*systolic/i,/E\s*['’′`´ˋ‘ʹ]|a['’′`´ˋ‘ʹ]|\/|ratio|VTI|mitral|\bMV\b|\bLV\b/i,[2,30]],
     ['Elat','E′ lateral','vel',[],/\blat\w*\.?\s*E\W{0,2}\s*vel|(e['’′`´ˋ‘ʹ]|e\s*prime|\bEa\b|\bEm\b|early diastolic tissue).*lat|lat.*(e['’′`´ˋ‘ʹ]|e\s*prime|\bEa\b|\bEm\b)/i,/E\s*\/\s*e|\/|ratio|a['’′`´ˋ‘ʹ]|s['’′`´ˋ‘ʹ]/i,[1,35]],
     ['Esep','E′ septal','vel',[],/\b(sept|med)\w*\.?\s*E\W{0,2}\s*vel|(e['’′`´ˋ‘ʹ]|e\s*prime|\bEa\b|\bEm\b|early diastolic tissue).*(sept|medial)|(sept|medial).*(e['’′`´ˋ‘ʹ]|e\s*prime|\bEa\b|\bEm\b)/i,/E\s*\/\s*e|\/|ratio|a['’′`´ˋ‘ʹ]|s['’′`´ˋ‘ʹ]/i,[1,35]],
@@ -3892,6 +3892,8 @@ const PACS=(function(){
     if(/user chosen|selected|chosen value/i.test(key)) s=3;
     else if(/mean|average/i.test(key)) s=2;
     if(/bi-?plane|\bBP\b/i.test(key)) s+=0.5;
+    if(/\bprox/i.test(key)) s-=0.5;        // "Prox ascAo Diam": usado só se não houver "Asc Ao Diam"
+    if(/\bAoR\b/.test(key)) s-=0.25;      // "AoR Diam": usado só se não houver "Ao Sinus Diam"
     return s;
   }
   /* Mapeia as medidas achatadas para os campos do laudo */
