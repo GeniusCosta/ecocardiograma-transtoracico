@@ -2071,7 +2071,8 @@ COMMENTS_LIB.forEach(c=>{ commentsState[c.id] = {active:false, t:c.t}; });
 const CONCL_CHIPS = [
   {id:'ccdn',   seg:'dim', label:'Câmaras normais',       t:'Câmaras cardíacas com dimensões normais.'},
   {id:'fsven',  seg:'cve', label:'FSVE preservada',       t:'Função sistólica global do ventrículo esquerdo preservada, sem alteração segmentar.'},
-  {id:'fsdbvn', seg:'cve', label:'FSD biventricular pres.',t:'Função sistólica e diastólica biventricular preservada, sem alteração segmentar.'},
+  {id:'fsdvep', seg:'cve', label:'FSD do VE preservada',   t:'Função sistólica e diastólica do ventrículo esquerdo preservada, sem alteração segmentar.'},
+  {id:'fsvdp',  seg:'cvd', label:'FSVD preservada',        t:'Função sistólica do ventrículo direito preservada, sem alteração segmentar.'},
   {id:'dd1',    seg:'dve', label:'Disfunção diastólica grau I', t:'Disfunção diastólica do ventrículo esquerdo grau I (leve).'},
   {id:'vcmdn',  seg:'vm',  label:'Valvas normais',        t:'Valvas cardíacas com morfologia e dinâmica normais.'},
   {id:'esclao', seg:'va',  label:'Esclerose calcífica da valva aórtica', t:'Esclerose calcífica da valva aórtica, sem repercussão hemodinâmica.'},
