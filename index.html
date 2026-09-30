@@ -4011,17 +4011,34 @@ const PACS=(function(){
     };
   }
   const GENERIC=/^(vel|velocity|pg|peak|mean|max|vmax|vti|value|valor|avg|m[eé]dia|vol|volume|diam|dist|area|length)$/i;
+  /* O pdf.js separa colunas com 3+ espaços. Cada linha vira "células" (rótulo + valor);
+     um título sem valor ("MV Peak E Vel") vale para as próximas 3 linhas DA MESMA COLUNA,
+     onde rótulos genéricos ("Vel", "PG", "Vol") ou valores soltos ("62.6 cm/s") herdam o nome. */
+  const TTL_TITULO=3;
   function parsePdf(lines){
-    const meas=[]; let ctx='';
+    const meas=[], tit={};   // tit[coluna] = {t:título, age:linhas desde o título}
     for(const ln of lines){
-      const first=ln.trim().split(/\s+/)[0]||'';
-      const ms=lineMeas(ctx && /^[-−]?\d/.test(first) ? ctx+' '+ln : ln);   // linha começa pelo valor → nome está na linha anterior
-      if(!ms.length){ const t=ln.trim(); if(t && t.length<=40 && !t.split(/\s+/).some(w=>NUM_RE.test(w)) && !/:/.test(t)) ctx=t; continue; }
-      let prev=null;
-      ms.forEach(m=>{ if(PAT_RE.test(m.name)) return;
-        if(m.name.split(/\s+/).every(w=>GENERIC.test(w))){ const base=prev||ctx; if(base) m.name=base+' '+m.name; }   // "Vel" → "MV Peak E Vel Vel"
-        else prev=m.name;
-        meas.push({name:m.name,code:'',scheme:'PDF',value:m.value,unit:m.unit.replace('²','2'),unitM:m.unit,mods:[],ctx:[]}); });
+      const cells=[];
+      ln.trim().split(/\s{3,}/).forEach(seg=>{
+        if(!seg) return;
+        if(cells.length && /^[-−]?\d/.test(seg)) cells[cells.length-1]+=' '+seg;   // valor pertence ao rótulo à esquerda
+        else cells.push(seg);
+      });
+      Object.keys(tit).forEach(k=>{ if(++tit[k].age>TTL_TITULO) delete tit[k]; });
+      let rowTit=null;
+      cells.forEach((cell,ci)=>{
+        const base=()=> (tit[ci]&&tit[ci].t) || rowTit;
+        const ms=lineMeas(/^[-−]?\d/.test(cell) && base() ? base()+' '+cell : cell);   // célula que começa pelo valor
+        if(!ms.length){
+          if(cell.length<=40 && !cell.split(/\s+/).some(w=>NUM_RE.test(w)) && !/:/.test(cell)){ tit[ci]={t:cell,age:0}; rowTit=cell; }
+          return;
+        }
+        let prev=null;
+        ms.forEach(m=>{ if(PAT_RE.test(m.name)) return;
+          if(m.name.split(/\s+/).every(w=>GENERIC.test(w))){ const b=prev||base(); if(b) m.name=b+' '+m.name; }   // "Vel" → "MV Peak E Vel Vel"
+          else prev=m.name;
+          meas.push({name:m.name,code:'',scheme:'PDF',value:m.value,unit:m.unit.replace('²','2'),unitM:m.unit,mods:[],ctx:[]}); });
+      });
     }
     return {meas,p:pdfPatient(lines.join('\n'))};
   }
