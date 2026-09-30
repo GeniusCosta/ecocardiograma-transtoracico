@@ -1471,6 +1471,31 @@ function grade(){
   }
   } // ← fim do bloco "if(!isPedM)" para estenoses e aorta
 
+  // ---- v.escl-70: Esclerose valvar mitral / aórtica ----
+  // Descrição antes da frase do refluxo; na conclusão a insuficiência entra na MESMA frase
+  // ("…, com insuficiência de grau X"), mantendo os parâmetros do refluxo moderado/grave.
+  // Estenose calculada prevalece (esclerose, por definição, não restringe a abertura).
+  const ESCL={
+    vm:{desc:'Cúspides levemente espessadas e calcificadas, com mobilidade e abertura preservadas.', concl:'Esclerose valvar mitral'},
+    va:{desc:'Válvulas levemente espessadas e calcificadas, com mobilidade e abertura preservadas.', concl:'Esclerose calcífica da valva aórtica'}
+  };
+  Object.entries(ESCL).forEach(([k,cfg])=>{
+    if((($('escl_'+k)||{}).value||'')!=='sim') return;
+    if(auto.desc[k+'_auto_sten']) return;
+    const g=(($('ref_'+k+'_grau')||{}).value)||'';
+    const gl = g==='leve' ? 'de grau leve' : g==='mod' ? 'de grau moderado' : g==='grave' ? 'grave' : '';
+    auto.desc[k+'_auto_escl_morfo']={seg:k, t: gl ? cfg.desc : cfg.desc+' Fluxo transvalvar normal ao Doppler e mapeamento de fluxo em cores.'};
+    if(k==='va'){
+      delete auto.desc['va_auto_escl'];                                   // frase do chip antigo "Esclerose calcífica Ao"
+      if(auto.desc['va_auto_morfo']) auto.desc['va_auto_morfo'].t='Bicúspide.';   // evita "morfologia normal" + esclerose
+    }
+    let params='';
+    const rc=auto.concl[k+'_refl_auto'];
+    if(rc){ const m=rc.match(/\(([^()]*)\)\.\s*$/); if(m) params=' ('+m[1]+')'; }
+    auto.concl[k+'_escl'] = gl ? cfg.concl+', com insuficiência '+gl+params+'.' : cfg.concl+'.';
+    if(gl) delete auto.concl[k+'_refl_auto'];                              // uma linha só: esclerose + insuficiência
+  });
+
   // armazena para badges no editor
   MEAS.stenAo=stenAo; MEAS.stenMt=stenMt;
 
@@ -2147,6 +2172,22 @@ function buildDesc(){
         ? 'Tricúspide: todos os graus mostram apenas PSAP e PAD. Leve não entra na conclusão; moderado/grave aparecem como insuficiência tricúspide.'
         : 'Leve gera a frase clássica; moderado/grave permitem inserir parâmetros quantitativos (PHT, vena contracta, ORE, volume regurgitante).';
       d.appendChild(hint);
+      // v.escl-70: esclerose valvar (mitral e aórtica) — abaixo do refluxo; combina com o grau do refluxo
+      if(seg.key==='vm' || seg.key==='va'){
+        const ep=document.createElement('div'); ep.className='sten-row inline-panel';
+        ep.innerHTML=`
+          <div class="sten-lbl">Esclerose valvar</div>
+          <div class="sten-flds">
+            <label>Presença
+              <select class="mm" id="escl_${seg.key}" style="text-align:left;width:140px">
+                <option value="">— não —</option>
+                <option value="sim">Sim</option>
+              </select>
+            </label>
+          </div>`;
+        d.appendChild(ep);
+        setTimeout(()=>{ const el=$('escl_'+seg.key); if(el && !el.__wired){ el.__wired=true; el.addEventListener('change',compute); el.addEventListener('input',compute); } },0);
+      }
       // wire — após inserir no DOM
       setTimeout(()=>{
         const grau=$('ref_'+seg.key+'_grau'); if(grau && !grau.__wired){grau.__wired=true;
@@ -2628,8 +2669,8 @@ const AUTOC_SEG = {
   // contratilidade VD (sistólica)
   disf_vd:'cvd',
   // valvas
-  vm_sten:'vm', prot_mt:'vm', vm_refl_auto:'vm', cam_mitral:'vm',
-  va_sten:'va', prot_ao:'va', va_refl_auto:'va', va_morfo_bi:'va',
+  vm_sten:'vm', prot_mt:'vm', vm_refl_auto:'vm', cam_mitral:'vm', vm_escl:'vm',
+  va_sten:'va', prot_ao:'va', va_refl_auto:'va', va_morfo_bi:'va', va_escl:'va',
   vt_refl_auto:'vt',
   // pulmonar / HP
   hp:'vp',
@@ -2956,7 +2997,7 @@ function renderPreview(){
   // 3) Chips aditivos da aba Conclusão (CONCL_CHIPS — v.diast-46) — respeitam a hierarquia
   //    do segmento (dim → aorta → cve → dve → cvd → vm → va → vt → vp → ...).
   CONCL_CHIPS.forEach(it=>{
-    if(conChipsState.has(it.id)) addLine(it.seg||null, it.t);
+    if(conChipsState.has(it.id) && !(it.id==='esclao' && (($('escl_va')||{}).value)==='sim')) addLine(it.seg||null, it.t);   // v.escl-70
   });
   // 3.5) Achados estruturados ativos (FINDINGS_LIB) — usam o segmento f.seg para hierarquia
   FINDINGS_LIB.forEach(f=>{
