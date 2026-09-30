@@ -3508,7 +3508,7 @@ async function gerarPDF(){
   const printSnap = prepareForPrint();   // troca textareas/botões por texto
   try{
     const pdf = new jsPDF({orientation:'portrait', unit:'mm', format:'a4'});
-    const pageEls=[$('a4p1'),$('a4p2')].filter(el=>el && el.offsetParent!==null); // ETE: página 1 (oculta) fica fora do PDF — laudo em folha única
+    const pageEls=[...document.querySelectorAll('#pages .a4')].filter(el=>el && el.offsetParent!==null); // ETE: página 1 (oculta) fica fora do PDF; v.sig-67: inclui as folhas de continuação da conclusão
     for(let i=0;i<pageEls.length;i++){
       const el=pageEls[i];
       const canvas=await html2canvas(el,{scale:2,useCORS:true,backgroundColor:'#ffffff',windowWidth:el.offsetWidth,windowHeight:el.offsetHeight});
@@ -4443,6 +4443,197 @@ const PACS=(function(){
     if(mod && !e.shiftKey && e.key.toLowerCase()==="i"){ e.preventDefault(); openPacs(); }
   });
   loadRoot();
+})();
+</script>
+<!-- ====================== v.sig-67: ASSINATURA PROTEGIDA (auto-shrink + paginação) ======================
+     Substitui os três ajustes da folha 2 que competiam entre si:
+       • fitPage2 (v.fit-54) reduzia a fonte do CONTÊINER #oConcl, mas cada <p> tem fonte própria
+         (.concl p{10.5pt}) — a redução não tinha efeito sobre o texto;
+       • autoShrinkA4 (v.ete-62) então encolhia a folha INTEIRA com transform:scale (cabeçalho e
+         assinatura juntos), com piso de 65%; além disso o conteúdo passava do fim da folha e o
+         overflow:hidden da impressão cortava a assinatura (impressão/PDF não permitiam 3ª folha);
+       • fitTeePage (ETE) reduzia a fonte por cima do scale já aplicado.
+     Nova regra: assinatura + data formam uma ÁREA PROTEGIDA que sempre termina acima do rodapé
+     institucional. Só a conclusão (no ETE: descrição + conclusão) encolhe — fonte e entrelinha —
+     até um mínimo legível; se ainda não couber, a conclusão continua em folhas seguintes (fonte
+     normal) e a assinatura vai na última. Medidas em unidades de layout (offsetTop/offsetHeight):
+     independem do zoom da tela e valem igual para tela, impressão e PDF. -->
+<style>
+  #pages .a4 .concl p{font-size:var(--conclFs,10.5pt);line-height:var(--conclLh,1.4)}
+  #pages .a4 .concl .concl-edit{font-size:var(--conclFs,10.5pt);line-height:var(--conclLh,1.4)}
+  body.mode-tee #a4p2 .desc p, body.mode-tee #a4p2 .concl p{line-height:var(--conclLh,1.3)}
+  /* folhas de continuação: a regra .a4:nth-of-type(n+3){display:none} escondia a 3ª folha na impressão */
+  @media print{ #pages .a4.a4-cont{display:block!important} }
+</style>
+<script>
+(function(){
+  const SAFE_PX=15;                               // ~4 mm de folga acima do rodapé institucional
+  const FS_MAX=10.5, FS_MIN=8, FS_MIN_ETE=7, FS_STEP=0.25, LHS=[1.4,1.3,1.2];
+
+  const topIn=(el,page)=>{ let y=0; for(let n=el; n && n!==page; n=n.offsetParent) y+=n.offsetTop; return y; };
+  const bottomIn=(el,page)=>topIn(el,page)+el.offsetHeight;
+  const visivel=el=>!!el && el.offsetParent!==null && getComputedStyle(el).visibility!=='hidden';
+  // limite inferior permitido = topo do rodapé institucional − folga
+  function limite(page){
+    const bf=page.querySelector('.brandfoot');
+    return (visivel(bf) ? topIn(bf,page) : page.clientHeight-45) - SAFE_PX;
+  }
+  // ponto mais baixo do que precisa caber: descrição, conclusão, assinatura e data
+  function fundo(page){
+    let b=0;
+    page.querySelectorAll('.desc, .concl, .sig-block, .foot').forEach(el=>{ if(visivel(el)) b=Math.max(b,bottomIn(el,page)); });
+    return b;
+  }
+  const cabe=page=>fundo(page)<=limite(page);
+  const ajustaTA=root=>root.querySelectorAll('textarea.concl-edit').forEach(ta=>{ ta.style.height='auto'; ta.style.height=(ta.scrollHeight+4)+'px'; });
+
+  function aplicar(page,fs,lh,ete){
+    ['--conclFs','--conclLh','--teeFs'].forEach(v=>page.style.removeProperty(v));
+    if(fs!=null){
+      page.style.setProperty(ete && page.id==='a4p2' ? '--teeFs' : '--conclFs', fs+'pt');
+      page.style.setProperty('--conclLh', String(lh));
+    }
+    ajustaTA(page);
+  }
+  // reduz fonte e entrelinha até caber; prefere a maior fonte possível (entrelinha menor antes da fonte)
+  function encolher(page,ete){
+    const min=ete && page.id==='a4p2' ? FS_MIN_ETE : FS_MIN;
+    for(let fs=FS_MAX; fs>=min-1e-6; fs=Math.round((fs-FS_STEP)*100)/100){
+      for(const lh of LHS){
+        if(fs===FS_MAX && lh===LHS[0]) continue;
+        aplicar(page,fs,lh,ete);
+        if(cabe(page)) return true;
+      }
+    }
+    aplicar(page,null);
+    return false;
+  }
+
+  let pag=null;   // estado da paginação: {anchor, moved:[{el,parent,next}], label}
+  function restaurar(){
+    const p2=$('a4p2'), concl=$('oConcl'), f2=$('oFoot2');
+    const sig=document.querySelector('.sig-block');
+    if(sig && p2 && !p2.contains(sig)) p2.querySelector('.content').insertBefore(sig, f2);
+    if(pag){
+      // se a conclusão foi re-renderizada, os blocos movidos estão obsoletos e são descartados
+      if(pag.anchor && concl.contains(pag.anchor)){
+        [...pag.moved].reverse().forEach(m=>{ if(m.parent.isConnected) m.parent.insertBefore(m.el, m.next && m.next.parentNode===m.parent ? m.next : null); });
+      }
+      if(pag.anchor && pag.anchor.parentNode) pag.anchor.remove();
+      if(pag.label) pag.label.style.display='';
+      pag=null;
+    }
+    document.querySelectorAll('#pages .a4.a4-cont').forEach(p=>p.remove());
+    if(f2) f2.style.visibility='';
+    const c=p2 && p2.querySelector('.content');
+    if(c){ c.style.transform=''; c.style.transformOrigin=''; c.style.width=''; }
+    // limpa estilos deixados pelos ajustes antigos
+    concl.style.fontSize=''; concl.style.lineHeight='';
+    concl.querySelectorAll('textarea').forEach(t=>{ t.style.fontSize=''; t.style.lineHeight=''; });
+    if(p2) aplicar(p2,null);
+  }
+
+  // folha de continuação: mesmo papel timbrado, título e identificação
+  function novaFolha(p2, depoisDe, rotulo){
+    const n=document.querySelectorAll('#pages .a4.a4-cont').length+3;
+    const pg=document.createElement('div'); pg.className='a4 a4-cont'; pg.id='a4p'+n;
+    const bg=p2.querySelector('img.bg'); if(bg) pg.appendChild(bg.cloneNode(true));
+    const c=document.createElement('div'); c.className='content'; pg.appendChild(c);
+    const tit=p2.querySelector('.doc-title'); if(tit){ const t=tit.cloneNode(true); t.removeAttribute('id'); c.appendChild(t); }
+    const idt=p2.querySelector('.idtab'); if(idt){ const t=idt.cloneNode(true); t.querySelectorAll('[id]').forEach(x=>x.removeAttribute('id')); c.appendChild(t); }
+    const lab=document.createElement('div'); lab.className='sec-label center'; lab.textContent=rotulo; c.appendChild(lab);
+    const concl=document.createElement('div'); concl.className='concl'; c.appendChild(concl);
+    const bf=p2.querySelector('.brandfoot'); if(bf) pg.appendChild(bf.cloneNode(true));
+    depoisDe.after(pg);
+    return {pg, c, concl};
+  }
+
+  function paginar(p2,ete){
+    const concl=$('oConcl'), sig=p2.querySelector('.sig-block'), f2=$('oFoot2');
+    const dataTxt=f2?f2.textContent:'';
+    sig.remove();                               // a assinatura vai para a última folha
+    if(f2) f2.style.visibility='hidden';        // a data acompanha a assinatura
+    aplicar(p2,null);
+    pag={anchor:document.createComment('pag-v.sig-67'), moved:[], label:null};
+    concl.appendChild(pag.anchor);
+    // blocos: parágrafos (ou o editor manual inteiro, que não pode ser dividido)
+    const blocos = concl.querySelector('textarea') ? [concl.firstElementChild] : [...concl.querySelectorAll('p')];
+    // 1) folha 2: tira blocos do fim até caber
+    const resto=[];
+    while(!cabe(p2) && blocos.length){
+      const b=blocos.pop();
+      pag.moved.push({el:b, parent:b.parentNode, next:b.nextSibling});
+      resto.unshift(b); b.remove();
+    }
+    if(!blocos.length){                        // nenhuma linha ficou na folha 2: o título vai junto
+      const l2=concl.previousElementSibling;
+      if(l2 && l2.classList.contains('sec-label')){ l2.style.display='none'; pag.label=l2; }
+    }
+    if(ete && !cabe(p2)) encolher(p2,ete);     // ETE: descrição longa ainda pode encolher
+    if(!cabe(p2)) console.warn('[laudo v.sig-67] a descrição excede a folha 2 mesmo sem a conclusão');
+
+    // 2) folhas de continuação (fonte normal), enchidas em ordem
+    let rot = blocos.length ? 'CONCLUSÕES (continuação)' : 'CONCLUSÕES';
+    let f=novaFolha(p2, p2, rot);
+    while(resto.length){
+      const b=resto.shift();
+      f.concl.appendChild(b);
+      if(!cabe(f.pg) && f.concl.children.length>1){   // não coube: começa nova folha
+        b.remove();
+        f=novaFolha(p2, f.pg, 'CONCLUSÕES (continuação)');
+        f.concl.appendChild(b);
+      }
+    }
+    // 3) assinatura + data na última folha
+    const foot=document.createElement('div'); foot.className='foot'; foot.textContent=dataTxt;
+    f.c.appendChild(sig); f.c.appendChild(foot);
+    if(!cabe(f.pg) && !encolher(f.pg,false)){
+      // nem com a fonte mínima: as últimas linhas descem para uma nova folha junto com a assinatura
+      const ult=novaFolha(p2, f.pg, 'CONCLUSÕES (continuação)');
+      ult.c.appendChild(sig); ult.c.appendChild(foot);
+      while(!cabe(f.pg) && f.concl.children.length>1) ult.concl.insertBefore(f.concl.lastElementChild, ult.concl.firstChild);
+      if(!cabe(ult.pg)) encolher(ult.pg,false);
+    }
+  }
+
+  function layoutPagina2(){
+    const p2=$('a4p2'); if(!p2) return;
+    restaurar();
+    if(p2.offsetParent===null) return;         // folha oculta
+    const ete=document.body.classList.contains('mode-tee');
+    ajustaTA(p2);
+    if(cabe(p2)) return;                       // 1) cabe como está
+    if(encolher(p2,ete)) return;               // 2) encolhe só a conclusão (ETE: descrição + conclusão)
+    paginar(p2,ete);                           // 3) abaixo do mínimo legível: continua em folhas seguintes
+  }
+
+  // substitui os ajustes antigos da folha 2 (chamados por nome em renderPreview/impressão/PDF)
+  window.fitPage2=layoutPagina2;
+  window.fitTeePage=function(){};
+  // folha 1 (medidas) mantém o auto-shrink por escala — não tem assinatura
+  window.autoShrinkA4=function(){
+    const page=$('a4p1'); if(!page) return;
+    const content=page.querySelector('.content'); if(!content) return;
+    content.style.transform=''; content.style.width='';
+    if(page.offsetParent===null) return;
+    const H=page.clientHeight; if(!H) return;
+    content.style.transformOrigin='top left';
+    let f=1.0, guard=0;
+    while(guard++<20){
+      if(content.scrollHeight*f<=H+1) break;
+      f=Math.max(0.65, Math.round((f-0.025)*1000)/1000);
+      content.style.transform='scale('+f+')';
+      content.style.width=(100/f)+'%';
+      if(f<=0.65) break;
+    }
+  };
+  // impressão/PDF: a rotina original só converte o editor manual que está em #oConcl (folha 2);
+  // desfaz a paginação antes, para a conversão achar tudo, e o fitPage2 dela refaz o layout por linha
+  const _prepararImpressao=window.prepareForPrint;
+  window.prepareForPrint=function(){ restaurar(); return _prepararImpressao.apply(this,arguments); };
+  window.__layoutPagina2=layoutPagina2;
+  layoutPagina2();
+  if(document.fonts && document.fonts.ready) document.fonts.ready.then(()=>{ try{ layoutPagina2(); }catch(e){} });
 })();
 </script>
 </body>
