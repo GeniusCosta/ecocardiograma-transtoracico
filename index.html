@@ -1149,7 +1149,7 @@ function grade(){
     // v.valv-55: BLOQUEIOS DA AVALIAÇÃO DIASTÓLICA (decisão Dr. Genius Costa).
     // Em três situações os índices diastólicos convencionais (E/A, E/E', volume do AE)
     // perdem validade e a função diastólica NÃO deve ser classificada:
-    //   1) exame em vigência de arritmia (comentário "Arritmia" / "Arritmia frequente");
+    //   1) exame em vigência de arritmia (comentário "Arritmia"; "Arritmia frequente" NÃO bloqueia);
     //   2) refluxo mitral moderado ou grave (sobrecarga de volume do AE falseia E e E/A);
     //   3) prótese em posição mitral (gradiente transprotético falseia o fluxo mitral).
     // Nesses casos a DESCRIÇÃO recebe "Função diastólica não avaliada devido ___" e
@@ -1157,7 +1157,6 @@ function grade(){
     const _cSt = (typeof commentsState!=='undefined') ? commentsState : {};
     const diastBlocks = [];
     if(_cSt['arritmia'] && _cSt['arritmia'].active)           diastBlocks.push('presença de arritmia');
-    if(_cSt['arritmia_freq'] && _cSt['arritmia_freq'].active) diastBlocks.push('presença de arritmia frequente');
     const _refVm = ($('ref_vm_grau')?.value)||'';
     if(_refVm==='mod')   diastBlocks.push('refluxo mitral moderado');
     if(_refVm==='grave') diastBlocks.push('refluxo mitral grave');
