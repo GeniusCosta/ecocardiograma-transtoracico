@@ -1166,7 +1166,9 @@ function grade(){
       const motivo = diastBlocks.length===1
         ? diastBlocks[0]
         : diastBlocks.slice(0,-1).join(', ') + ' e ' + diastBlocks[diastBlocks.length-1];
-      auto.desc['dve_auto']={seg:'dve', t:`Função diastólica não avaliada devido ${motivo}.`};
+      // só arritmia: frase curta (o rótulo do segmento já diz "Função diastólica")
+      const soArritmia = diastBlocks.every(b=>b.indexOf('arritmia')>=0);
+      auto.desc['dve_auto']={seg:'dve', t: soArritmia ? `Não avaliada devido à ${motivo}.` : `Função diastólica não avaliada devido ${motivo}.`};
       delete auto.concl['dve'];
     } else {
       const dia = gradeDiastolic(m);
@@ -2477,7 +2479,7 @@ function buildCon(){
         const cid=sel.value; if(!cid)return;
         commentsState[cid].active=true;
         sel.value='';
-        renderCommentsBlock(); renderPreview();
+        renderCommentsBlock(); compute();   // compute (não só renderPreview): arritmia altera a graduação diastólica
       });
     }
     renderCommentsBlock();
@@ -2503,7 +2505,7 @@ function renderCommentsBlock(){
       commentsState[cid].active=false;
       // restaurar texto original
       commentsState[cid].t = COMMENTS_LIB.find(x=>x.id===cid).t;
-      renderCommentsBlock(); renderPreview();
+      renderCommentsBlock(); compute();
     };
   });
   cont.querySelectorAll('.finding-ta').forEach(ta=>{
