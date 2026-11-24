@@ -1721,8 +1721,12 @@ function buildDiastDescSentence(ea, eemed, es, el, isFEr){
     return `Função diastólica do ventrículo esquerdo avaliada${fEr}.`;
   }
   // ambos E/A e E/E' médio presentes → frase canônica
-  const hasDiminuicao = (es!=null && es<7) || (el!=null && el<10);
-  const clauseE = hasDiminuicao ? ' e diminuição das ondas E’ septal e E’ lateral' : '';
+  // cita só a(s) onda(s) E' de fato reduzida(s): septal <7, lateral <10 (antes citava as duas
+  // sempre que uma delas estivesse baixa)
+  const sepBaixa = es!=null && es<7, latBaixa = el!=null && el<10;
+  const clauseE = (sepBaixa && latBaixa) ? ' e diminuição das ondas E’ septal e E’ lateral'
+                : sepBaixa ? ' e diminuição da onda E’ septal'
+                : latBaixa ? ' e diminuição da onda E’ lateral' : '';
   return `Fluxo diastólico mitral com relação E/A = ${fmt(ea,2)}${clauseE}, com relação E/E’ média de ${fmt(eemed,1)}${fEr}.`;
 }
 
@@ -4535,7 +4539,10 @@ const PACS=(function(){
   }
   #pages .a4 .cont-note{font-size:9pt;font-style:italic;text-align:right;color:#444;margin-top:6px}
   /* v.cor-71: rótulos dos segmentos da folha 2 no padrão dos títulos de grupo da folha 1 (.meas-grid .g-h): verde-petróleo e CAIXA ALTA */
-  #pages .a4 .desc .lbl{color:#15514a;text-transform:uppercase}
+  #pages .a4 .desc .lbl{color:var(--corLaudo,#15514a);text-transform:uppercase}
+  /* v.cor-72: mesma cor nos títulos de grupo da tabela da folha 1 (escolhida no seletor "Cor do laudo") */
+  #pages .a4 .meas-grid .g-h{color:var(--corLaudo,#15514a)}
+  #corLaudo{background:var(--panel2);border:1px solid var(--line);color:var(--ink);padding:5px 8px;border-radius:6px;font-size:12px;cursor:pointer}
 </style>
 <script>
 (function(){
@@ -4724,6 +4731,21 @@ const PACS=(function(){
   // desfaz a paginação antes, para a conversão achar tudo, e o fitPage2 dela refaz o layout por linha
   const _prepararImpressao=window.prepareForPrint;
   window.prepareForPrint=function(){ restaurar(); return _prepararImpressao.apply(this,arguments); };
+  // v.cor-72: cor das fontes de destaque do laudo — preferência deste computador (não entra no paciente nem é zerada pelo Novo)
+  (function(){
+    const CORES={verde:'#15514a', preto:'#1a1a1a', azul:'#1f3a6b'};
+    const KEY='laudo_cor_v1';
+    let atual='verde'; try{ atual=localStorage.getItem(KEY)||'verde'; }catch(e){}
+    if(!CORES[atual]) atual='verde';
+    const aplicarCor=k=>document.documentElement.style.setProperty('--corLaudo', CORES[k]);
+    aplicarCor(atual);
+    const sel=document.createElement('select'); sel.id='corLaudo'; sel.title='Cor dos títulos e rótulos do laudo (combine com o logotipo do local)';
+    sel.innerHTML='<option value="verde">Cor do laudo: Verde</option><option value="preto">Cor do laudo: Preto</option><option value="azul">Cor do laudo: Azul navy</option>';
+    sel.value=atual;
+    sel.addEventListener('change',()=>{ aplicarCor(sel.value); try{ localStorage.setItem(KEY, sel.value); }catch(e){} });
+    const ref=$('btnPACS')||$('btnPasta');
+    if(ref && ref.parentNode) ref.parentNode.insertBefore(sel, ref);
+  })();
   window.__layoutPagina2=layoutPagina2;
   layoutPagina2();
   if(document.fonts && document.fonts.ready) document.fonts.ready.then(()=>{ try{ layoutPagina2(); }catch(e){} });
