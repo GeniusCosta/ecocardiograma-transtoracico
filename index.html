@@ -3427,30 +3427,80 @@ function patRestore(s){
     compute();
   },0);
 }
-function patAll(){ try{ return JSON.parse(localStorage.getItem(LS_KEY)||'{}'); }catch(e){ return {}; } }
-function patSave(){
+/* v.banco-73: o banco de pacientes passou do localStorage para o IndexedDB.
+   O localStorage tem ~5 MB DIVIDIDOS com todos os programas publicados em geniuscosta.github.io
+   (eco, ECG, Doppler, fetal…); quando enchia, o Salvar falhava em silêncio (QuotaExceededError).
+   O IndexedDB comporta centenas de MB. Na primeira abertura, os pacientes antigos do localStorage
+   são migrados e a chave antiga é apagada (libera espaço para os outros programas). */
+const PAT_DB='encor_eco_pacientes', PAT_STORE='p';
+let _patDb=null, _patMig=null;
+function patDb(){
+  return _patDb || (_patDb=new Promise((res,rej)=>{
+    const r=indexedDB.open(PAT_DB,1);
+    r.onupgradeneeded=()=>r.result.createObjectStore(PAT_STORE);
+    r.onsuccess=()=>res(r.result);
+    r.onerror=()=>{ _patDb=null; rej(r.error); };
+  }));
+}
+// migração única: localStorage → IndexedDB (mantém a versão mais recente de cada paciente)
+function patMigrate(){
+  return _patMig || (_patMig=(async()=>{
+    let old=null; try{ old=JSON.parse(localStorage.getItem(LS_KEY)||'null'); }catch(e){ old=null; }
+    if(!old || typeof old!=='object'){ return; }
+    const db=await patDb();
+    await new Promise((res,rej)=>{
+      const tx=db.transaction(PAT_STORE,'readwrite'), st=tx.objectStore(PAT_STORE);
+      Object.entries(old).forEach(([k,v])=>{
+        if(!v||!v.nome||!v.snapshot) return;
+        const g=st.get(k);
+        g.onsuccess=()=>{ const cur=g.result; if(!cur || (v.snapshot.savedAt||'')>((cur.snapshot&&cur.snapshot.savedAt)||'')) st.put(v,k); };
+      });
+      tx.oncomplete=res; tx.onerror=()=>rej(tx.error); tx.onabort=()=>rej(tx.error);
+    });
+    try{ localStorage.removeItem(LS_KEY); }catch(e){}
+  })().catch(e=>{ _patMig=null; throw e; }));
+}
+async function patAll(){
+  await patMigrate();
+  const db=await patDb();
+  return new Promise((res,rej)=>{
+    const out={}, tx=db.transaction(PAT_STORE,'readonly'), c=tx.objectStore(PAT_STORE).openCursor();
+    c.onsuccess=()=>{ const cur=c.result; if(cur){ out[cur.key]=cur.value; cur.continue(); } };
+    tx.oncomplete=()=>res(out); tx.onerror=()=>rej(tx.error);
+  });
+}
+async function patWrite(fn){
+  await patMigrate();
+  const db=await patDb();
+  return new Promise((res,rej)=>{
+    const tx=db.transaction(PAT_STORE,'readwrite'); fn(tx.objectStore(PAT_STORE));
+    tx.oncomplete=res; tx.onerror=()=>rej(tx.error); tx.onabort=()=>rej(tx.error);
+  });
+}
+const patErr=(acao,e)=>{ console.error('[Banco]',acao,e); toast('Não foi possível '+acao+': '+((e&&(e.message||e.name))||e)+' — exporte um backup (Banco ▸ Exportar JSON).', true); };
+async function patSave(){
   const nome=($('pNome').value||'').trim();
   if(!nome){ toast('Preencha o nome do paciente antes de salvar', true); return; }
-  const all=patAll();
-  const key=sanitizeName(nome);
-  all[key]={nome, snapshot:patSnap()};
-  localStorage.setItem(LS_KEY, JSON.stringify(all));
-  toast('Paciente salvo: '+nome);
+  try{
+    const key=sanitizeName(nome), rec={nome, snapshot:patSnap()};
+    await patWrite(st=>st.put(rec,key));
+    toast('Paciente salvo: '+nome);
+  }catch(e){ patErr('salvar o paciente',e); }
 }
-function patDelete(key){
-  const all=patAll(); delete all[key];
-  localStorage.setItem(LS_KEY, JSON.stringify(all));
+async function patDelete(key){
+  try{ await patWrite(st=>st.delete(key)); }catch(e){ patErr('excluir',e); }
   renderBancoList();
 }
-function patLoad(key){
-  const all=patAll(); const p=all[key]; if(!p)return;
+async function patLoad(key){
+  let p=null; try{ p=(await patAll())[key]; }catch(e){ patErr('abrir o paciente',e); return; }
+  if(!p)return;
   patRestore(p.snapshot);
   closeBanco();
   toast('Paciente carregado: '+p.nome);
 }
-function renderBancoList(){
+async function renderBancoList(){
   const q=($('bSearch').value||'').toLowerCase();
-  const all=patAll();
+  let all={}; try{ all=await patAll(); }catch(e){ patErr('ler o banco',e); }
   const arr=Object.entries(all).map(([k,v])=>({k,nome:v.nome,dt:v.snapshot?.savedAt||''}))
                 .filter(x=>!q||x.nome.toLowerCase().includes(q))
                 .sort((a,b)=>(b.dt||'').localeCompare(a.dt||''));
@@ -3472,8 +3522,9 @@ function openBanco(){ $('modalBanco').style.display='flex'; $('bSearch').value='
 function closeBanco(){ $('modalBanco').style.display='none'; }
 $('btnBanco').onclick=openBanco;
 $('bSearch').addEventListener('input',renderBancoList);
-$('bExport').onclick=()=>{
-  const data=JSON.stringify(patAll(),null,2);
+$('bExport').onclick=async()=>{
+  let all; try{ all=await patAll(); }catch(e){ patErr('exportar',e); return; }
+  const data=JSON.stringify(all,null,2);
   const blob=new Blob([data],{type:'application/json'});
   const a=document.createElement('a'); a.href=URL.createObjectURL(blob);
   a.download='backup_pacientes_encor_'+new Date().toISOString().slice(0,10)+'.json';
@@ -3484,18 +3535,19 @@ $('bImport').onclick=()=>$('bImportFile').click();
 $('bImportFile').onchange=e=>{
   const f=e.target.files[0]; if(!f)return;
   const r=new FileReader();
-  r.onload=()=>{
+  r.onload=async()=>{
+    let imp; try{ imp=JSON.parse(r.result); }catch(err){ toast('Falha ao importar: arquivo inválido', true); return; }
     try{
-      const imp=JSON.parse(r.result);
-      const all=patAll();
-      let n=0; Object.entries(imp).forEach(([k,v])=>{ if(v&&v.nome&&v.snapshot){all[k]=v;n++;} });
-      localStorage.setItem(LS_KEY,JSON.stringify(all));
+      let n=0;
+      await patWrite(st=>{ Object.entries(imp).forEach(([k,v])=>{ if(v&&v.nome&&v.snapshot){ st.put(v,k); n++; } }); });
       renderBancoList();
       toast(`Importados ${n} pacientes`);
-    }catch(err){ toast('Falha ao importar: arquivo inválido', true); }
+    }catch(err){ patErr('importar',err); }
   };
   r.readAsText(f); e.target.value='';
 };
+// migra os pacientes antigos já na abertura (libera o localStorage para os outros programas)
+patMigrate().catch(e=>console.error('[Banco] migração',e));
 
 /* ====================== PASTA DE SAÍDA (File System Access API) ====================== */
 async function pickFolder(){
